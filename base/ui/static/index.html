@@ -1,0 +1,56 @@
+<!doctype html><html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>convoy</title>
+<style>
+:root{--bg:#14181a;--card:#1b2124;--line:#313a3e;--tx:#dce2e2;--dim:#939c9e;
+--amber:#e0a03c;--sage:#7cbe9b;--rust:#de7a5c}
+body{margin:0;background:var(--bg);color:var(--tx);font:15px/1.5 system-ui}
+header{padding:14px 18px;border-bottom:1px solid var(--line);display:flex;gap:12px;align-items:baseline}
+h1{font-size:16px;margin:0}#state{color:var(--dim);font-size:12px}
+main{padding:14px;display:grid;gap:10px;grid-template-columns:repeat(auto-fill,minmax(260px,1fr))}
+.card{background:var(--card);border:1px solid var(--line);border-radius:6px;padding:12px}
+.card h2{margin:0 0 4px;font-size:15px}.card h2 .role{color:var(--amber);font-size:11px;margin-left:6px}
+.meta{color:var(--dim);font-size:12px}.talk{color:var(--sage);font-weight:600}
+.stale{color:var(--rust)}
+.rooms button{margin:6px 6px 0 0;padding:4px 10px;background:none;border:1px solid var(--line);
+color:var(--tx);border-radius:4px;cursor:pointer}
+.rooms button.on{border-color:var(--amber);color:var(--amber)}
+#textbar{grid-column:1/-1;display:flex;gap:8px}
+#textbar input{flex:1;background:var(--card);border:1px solid var(--line);color:var(--tx);
+padding:8px;border-radius:4px}
+#textbar button{padding:8px 14px;background:var(--amber);border:none;border-radius:4px;font-weight:600}
+</style></head><body>
+<header><h1>convoy</h1><span id="state">connecting…</span></header>
+<main id="grid"></main>
+<script>
+const ws = new WebSocket(`ws://${location.hostname}:8800/`);
+let snap = null;
+ws.onopen = () => ws.send(JSON.stringify({v:1,t:"hello",ts:Date.now()/1e3,from:"ui",data:{kind:"ui"}}));
+ws.onmessage = (e) => { const m = JSON.parse(e.data);
+  if (m.t === "snapshot") { snap = m.data; render(); }
+};
+ws.onclose = () => document.getElementById("state").textContent = "disconnected";
+function send(t, data){ ws.send(JSON.stringify({v:1,t,ts:Date.now()/1e3,from:"ui",data})); refresh(); }
+function refresh(){ setTimeout(()=>ws.send(JSON.stringify({v:1,t:"hello",ts:Date.now()/1e3,from:"ui",data:{}})),150); }
+function render(){
+  document.getElementById("state").textContent =
+    `rooms: ${snap.rooms.join(", ")} · talking: ${snap.talking.join(", ")||"—"} · ${snap.speed_kmh|0} km/h`;
+  const g = document.getElementById("grid"); g.innerHTML = "";
+  for (const [id, r] of Object.entries(snap.riders)) {
+    const n = snap.nodes[id] || {}; const stale = !n.at || (Date.now()/1e3 - n.at > 5);
+    const el = document.createElement("div"); el.className = "card";
+    el.innerHTML = `<h2>${id}<span class="role">${r.role}</span></h2>
+      <div class="meta ${stale?"stale":""}">${stale?"offline / no heartbeat":
+        `rssi ${n.rssi??"?"} · loss ${n.rtp_loss??"?"}% · ${n.vad_state?'<span class="talk">talking</span>':"quiet"}${n.clip?" · CLIP":""}`}</div>
+      <div class="rooms">${snap.rooms.map(rm =>
+        `<button class="${r.room===rm?"on":""}" onclick="send('move',{pid:'${id}',room:'${rm}',by:'chase'})">${rm}</button>`).join("")}
+        <button onclick="send('lead_transfer',{lead:'${id}'})">☆ lead</button></div>`;
+    g.appendChild(el);
+  }
+  const tb = document.createElement("div"); tb.id = "textbar";
+  tb.innerHTML = `<input id="txt" placeholder="broadcast text… (+speak)">
+    <button onclick="send('text',{msg:document.getElementById('txt').value,speak:true})">send</button>`;
+  g.appendChild(tb);
+}
+setInterval(()=>{ if (ws.readyState===1) ws.send(JSON.stringify({v:1,t:"hello",ts:Date.now()/1e3,from:"ui",data:{}})); }, 2000);
+</script></body></html>
