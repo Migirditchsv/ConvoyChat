@@ -1,0 +1,17 @@
+[project]
+name = "convoy-comms"
+version = "0.1.0"
+description = "Wi-Fi group intercom for motorcycle convoys: BYO Bluetooth headsets, Pi edge bridges, chase-car mixer"
+requires-python = ">=3.11"
+dependencies = ["numpy>=1.24", "PyYAML>=6.0", "websockets>=12.0"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "scipy>=1.11"]
+vad = ["pysilero-vad>=2.0"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.setuptools]
+packages = ["common", "bridge", "bridge.audio", "bridge.net", "base", "base.mixer", "base.orc", "base.media", "sim"]

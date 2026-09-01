@@ -1,0 +1,4 @@
+#!/usr/bin/env python3
+"""Device-side CLI (M2): pair <headset-mac>, qualify, status. Stub until hardware."""
+import sys
+print("bridgectl: device-side tool; implemented at M2 (needs BlueZ). Args:", sys.argv[1:])
