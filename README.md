@@ -1,4 +1,4 @@
-# convoy-comms
+# ConvoyChat
 
 Wi-Fi group intercom for motorcycle convoys. Riders bring their own Bluetooth
 headsets (Cardo / Sena / cheap knockoffs); a $25 Pi on each bike masquerades as
@@ -25,14 +25,20 @@ to `docs/decisions/`.
 ## Quickstart (any Linux, no hardware)
 
     sudo apt install libopus0 espeak-ng   # opus runtime + fixture fallback voices
+    make doctor      # preflight — every dependency checked, with remedies
     make setup
     make demo        # START HERE: 40 s scripted ride on the real stack —
                      #   live dashboard at http://localhost:8080 (controls work
                      #   mid-ride), then demo_out/ears/*.wav = what each rider
                      #   heard, mouths/*.wav = what their mic picked up,
                      #   timeline.txt = every gate/duck/move/ack
-    make test        # Tier-0: S-01 .. S-12 (32 tests)
-    make base        # base station alone (mixer + control WS + dashboard)
+    make listen      # play the headline demo recording
+    make test        # Tier-0: S-01 .. S-12 (32 tests, ~90 s)
+    make base        # base station alone — prints one line, then serves (Ctrl-C)
+
+Nothing compiles — pure Python over system libopus. `make demo`'s product is
+the live dashboard plus FILES in demo_out/ (only `make listen` touches your
+speakers). New to the project? Read `catchup.md`.
 
 ## Status
 

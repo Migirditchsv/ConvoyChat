@@ -117,11 +117,14 @@ def build(force: bool = False) -> dict:
             m = json.load(f)
         if m.get("rev") == FIXTURE_REV:
             return m
+    print("building fixtures (first run takes ~30-60 s)...", flush=True)
     speech, speech_src = _speech_clips()
+    print(f"  speech source: {speech_src} ({len(speech)} clips)", flush=True)
     speech = [_calibrate(sp, SPEECH_DB) for sp in speech]
     sets = {}
     wind_src = "synth"
     for speed, _ in WIND_DB.items():
+        print(f"  wind tier {speed} km/h: 60 s labeled mix + 300 s wind-only take...", flush=True)
         dur = 60.0
         wind, wind_src = _wind_take(dur, speed)
         wind = _calibrate(wind, WIND_DB[speed])
