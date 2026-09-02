@@ -7,7 +7,9 @@ After=network-online.target bluetooth.target pipewire.service
 Wants=network-online.target bluetooth.target
 
 [Service]
-Type=simple
+Type=notify
+NotifyAccess=main
+WatchdogSec=15
 User=convoy
 WorkingDirectory=/opt/convoychat
 ExecStart=/usr/bin/python3 -m bridge.main --config /boot/convoy.toml --quiet

@@ -45,13 +45,23 @@ button.danger{border-color:var(--rust);color:var(--rust)}
 #log{font:11px/1.6 ui-monospace,monospace;color:var(--dim);background:var(--card);
 border:1px solid var(--line);border-radius:8px;padding:8px 12px;max-height:110px;overflow-y:auto;white-space:pre-wrap}
 #sim{display:none;align-items:center;gap:6px;font-size:12px;color:var(--dim)}
+#issues{margin:12px 12px 0;display:grid;gap:6px}
+.iss{display:flex;gap:10px;align-items:center;flex-wrap:wrap;background:var(--card);border:1px solid var(--line);border-left:4px solid var(--dim);border-radius:8px;padding:8px 12px;font-size:13px}
+.iss.bad{border-left-color:var(--rust)}.iss.warn{border-left-color:var(--amber)}.iss.info{border-left-color:var(--slate)}
+.iss b{color:var(--tx)}.iss .why{color:var(--dim);flex:1;min-width:200px}
+.iss button{font-size:13px;padding:6px 12px}.iss .hint{font-size:12px;color:var(--dim);border:1px dashed var(--line);border-radius:5px;padding:4px 8px}
+#health{font-size:12px;padding:2px 8px;border-radius:9px;border:1px solid var(--sage);color:var(--sage)}
+#health.bad{border-color:var(--rust);color:var(--rust)}#health.warn{border-color:var(--amber);color:var(--amber)}
+.doc{font-size:11px;margin:4px 0;border-top:1px dashed var(--line);padding-top:4px}
+.doc div{display:flex;gap:6px}.doc .ok{color:var(--sage)}.doc .fail{color:var(--rust)}
 </style></head><body>
 <header>
   <h1>convoy ops<a href="/">home</a><a href="/rider">rider page</a></h1>
-  <span id="conn" style="font-size:11px;padding:2px 8px;border-radius:9px;border:1px solid var(--rust);color:var(--rust)">connecting…</span><span id="state"></span>
+  <span id="conn" style="font-size:11px;padding:2px 8px;border-radius:9px;border:1px solid var(--rust);color:var(--rust)">connecting…</span><span id="health">…</span><span id="state"></span>
   <label id="sim">sim speed <input type="range" min="0" max="130" value="0" id="spd" style="accent-color:var(--amber)"><span id="spdv">0</span> km/h</label>
   <label class="tgl"><input type="checkbox" id="hbt">heartbeat tone (all)</label>
 </header>
+<div id="issues"></div>
 <main id="grid"></main>
 <div style="padding:0 12px 14px;display:grid;gap:8px">
   <div id="textbar"><input id="txt" placeholder="type here, press send — it is SPOKEN into room `main` (TTS)">
@@ -82,8 +92,17 @@ function meter(l,v,u,warn,bad,inv){const c=v==null?"":(inv?(v<bad?"bad":v<warn?"
   return `<div class="${c}">${l}<b>${v==null?"—":v}${u||""}</b></div>`;}
 function sendText(){const el=$("txt");if(!el.value.trim())return;send("text",{msg:el.value,speak:$("spk").checked});addlog("text: "+el.value);el.value="";}
 $("sendbtn").onclick=sendText;$("txt").onkeydown=e=>{if(e.key==="Enter")sendText();};
+function fix(f){if(f.msg){send(f.msg.t,f.msg.data);addlog(`fix: ${f.label} → ${JSON.stringify(f.msg.data)}`);}}
+function renderIssues(){
+  const box=$("issues"), iss=snap.issues||[];
+  const h=$("health"); h.textContent=snap.health||"…"; h.className=iss.some(i=>i.level==="bad")?"bad":iss.some(i=>i.level==="warn")?"warn":"";
+  const html=iss.map((i,k)=>`<div class="iss ${i.level}"><b>${esc(i.title)}</b><span class="why">${esc(i.why)}</span>`+
+    i.fixes.map((f,j)=>f.msg?`<button data-i="${k}" data-j="${j}">${esc(f.label)}</button>`:`<span class="hint">${esc(f.label)}: ${esc(f.hint)}</span>`).join("")+`</div>`).join("");
+  if(box._html!==html){box._html=html;box.innerHTML=html;box.querySelectorAll("button[data-i]").forEach(b=>b.onclick=()=>fix(iss[+b.dataset.i].fixes[+b.dataset.j]));}
+}
 function render(){
   const g=$("grid"); if(!snap) return;
+  renderIssues();
   $("sim").style.display=snap.mode==="sim"?"flex":"none";
   $("state").textContent=
     `${snap.mode} · talking: ${snap.talking.join(", ")||"—"} · ${snap.speed_kmh|0} km/h · rooms: ${snap.rooms.join("/")}`
@@ -114,6 +133,7 @@ function render(){
         ${n.last_ack?`<span class="b">${n.last_ack.ok===null?"…":n.last_ack.ok?"✓":"✕"} ${esc(typeof n.last_ack.detail==="string"?n.last_ack.detail:(n.last_ack.cmd||""))}</span>`:''}
       </div>
       <div class="hs">headset: ${hs?`${esc(hs.name)} ${hs.connected?'<span style="color:var(--sage)">connected</span>':'<span style="color:var(--rust)">NOT connected</span>'}`:"none paired"}</div>
+      ${n.last_ack&&n.last_ack.cmd==="doctor"&&n.last_ack.detail&&n.last_ack.detail.checks?`<div class="doc">${n.last_ack.detail.checks.map(c=>`<div><span class="${c.ok?'ok':'fail'}">${c.ok?'✓':'✕'}</span><span>${esc(c.name)}: ${esc(c.detail)}${!c.ok&&c.remedy?` → ${esc(c.remedy)}`:''}</span></div>`).join("")}</div>`:''}
       <div class="net">
         ${meter("rssi",n.rssi," dBm",-70,-80,true)}
         ${meter("loss",n.rtp_loss,"%",5,20)}
@@ -133,6 +153,7 @@ function render(){
         <button data-cmd="reconnect_bt">BT ⟳</button>
         <button data-cmd="reconnect_wifi">wifi ⟳</button>
         <button data-cmd="bt_status">BT?</button>
+        <button data-cmd="doctor" title="run the bridge's self-check">check bike</button>
         ${snap.mode==="sim"?'<button data-cmd="say" data-args=\'{"clip":1}\'>say</button>':''}
         <button class="danger" data-act="reboot">reboot</button>
       </div>`;

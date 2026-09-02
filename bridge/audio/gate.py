@@ -39,6 +39,8 @@ class SpeechGate:
                 open_t, keep_t, need = o, k, n
         if (mode or self._mode) == "energy":
             open_t, keep_t = open_t + 0.10, keep_t + 0.20
+        elif (mode or self._mode) == "spectral":
+            open_t, keep_t = max(open_t, 0.55), keep_t + 0.10   # fitted model: firmer open
         return open_t, keep_t, need
 
     def process(self, frame: np.ndarray, prob: float, speed_kmh: float = 0.0,

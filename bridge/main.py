@@ -23,7 +23,8 @@ from bridge.agent import BridgeAgent, DeviceActions, SimActions
 from bridge.engine import BridgeEngine
 from bridge.io_adapters import CmdSource, CmdSink, ArraySink
 from bridge.net.linkstats import IwLinkStats
-from bridge.net.supervisor import EvictionPolicy
+from bridge.net.supervisor import EvictionPolicy, HeadsetSupervisor
+from common.sdnotify import SdNotify
 from bridge.net.failover import LinkFailover, FailoverConfig, Obs, WifiActions
 from bridge.radio import RadioFailover
 from common.radio import RadioLink, make_ptt
@@ -107,6 +108,13 @@ async def run(cfg: cfgmod.BridgeConfig, sim: bool, verbose: bool, roster_path: s
 
     await eng.start()
     await agent.start()
+    agent.doctor_kwargs = lambda: {"cfg": cfg, "agent_connected": agent.connected,
+                                   "source_alive": getattr(source, "alive", None),
+                                   "sink_alive": getattr(sink, "alive", None)}
+    sd = SdNotify(); sd.ready()
+    headset = HeadsetSupervisor(
+        reconnect_action=lambda: asyncio.get_running_loop().create_task(actions.reconnect_bt()),
+        earcon_action=actions._earcon)
 
     evict = EvictionPolicy(
         evict_action=lambda: asyncio.get_running_loop().create_task(actions.reconnect_wifi()),
@@ -163,6 +171,11 @@ async def run(cfg: cfgmod.BridgeConfig, sim: bool, verbose: bool, roster_path: s
         if agent.connected != last_conn:
             log.info("control link %s", "up" if agent.connected else "DOWN")
             last_conn = agent.connected
+        hs = getattr(actions, "last_headset", None)
+        if not sim and headset.tick_1s(None if hs is None else bool(hs.get("connected"))):
+            log.warning("headset down %ds: reconnect attempt %d", headset._down, headset.attempts)
+        if eng._frame_n > getattr(run, "_last_frame", -1):     # tick alive -> feed the watchdog
+            sd.watchdog(); run._last_frame = eng._frame_n
         if verbose:
             s = eng.stats
             extra = ""
@@ -188,6 +201,7 @@ def main(argv=None):
     ap.add_argument("--roster", default=None, help="roster.yaml copy to derive down_port")
     ap.add_argument("--verbose", "-v", action="store_true", help="1 Hz status line (hardware testing)")
     ap.add_argument("--quiet", "-q", action="store_true", help="field: warnings only")
+    ap.add_argument("--doctor", action="store_true", help="run the device self-check and exit")
     args = ap.parse_args(argv)
     logging.basicConfig(level=logging.WARNING if args.quiet else logging.INFO,
                         format="%(asctime)s %(name)s %(levelname)s %(message)s",
@@ -203,6 +217,18 @@ def main(argv=None):
                                          "base": args.base or os.environ.get("CONVOY_BASE", "127.0.0.1")}})
     if args.down_port:
         cfg.down_port = args.down_port
+    if args.doctor:
+        acts = DeviceActions(engine=None, enabled=False, headset_mac=cfg.headset_mac,
+                             wifi_iface=cfg.wifi_iface)
+        r = asyncio.run(acts.doctor(cfg=cfg))
+        print("bridge doctor -----------------------------------------------")
+        for c in r["checks"]:
+            print(f"  {c['name']:<16} {'OK  ' if c['ok'] else 'FAIL'} {c['detail']}")
+            if not c["ok"] and c["remedy"]:
+                print(f"  {'':<16}      -> {c['remedy']}")
+        print("-------------------------------------------------------------")
+        print("  all OK" if r["ok"] else "  fix the FAIL lines, then `make bridge`")
+        sys.exit(0 if r["ok"] else 1)
     try:
         asyncio.run(run(cfg, args.sim, args.verbose, args.roster))
     except KeyboardInterrupt:

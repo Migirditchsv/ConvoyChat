@@ -11,7 +11,7 @@ import numpy as np
 
 from common.audio import FRAME, RTP_TS_STEP
 from common.dsp import SpeedHPF, Agc
-from common.opusbind import Encoder, Decoder
+from common.opusbind import Encoder, Decoder, OpusError
 from common.protocol import rtp_pack, rtp_unpack, ssrc_of
 from bridge.audio.vad import SafeVad
 from bridge.audio.gate import SpeechGate
@@ -74,6 +74,7 @@ class DownlinkChain:
         self._earcons: deque[np.ndarray] = deque()
         self._misses = 0
         self._aux: np.ndarray | None = None   # extra audio for the next pull (RF rx)
+        self.bad = 0              # undecodable payloads (treated as loss)
         self.pulled = 0           # frames handed to the sink
         self.decoded = 0          # ... from a real packet
         self.concealed = 0        # ... PLC (a packet the mixer sent never arrived)
@@ -102,22 +103,36 @@ class DownlinkChain:
                 f = np.pad(f, (0, FRAME - len(f)))
             self._earcons.append(f.astype(np.int16))
 
+    def _decode(self, payload: bytes | None) -> np.ndarray:
+        try:
+            out = self.dec.decode(payload, FRAME)
+        except OpusError:
+            self.bad += 1
+            try:
+                out = self.dec.decode(None, FRAME)
+            except OpusError:
+                out = np.zeros(FRAME, dtype=np.int16)
+        if len(out) != FRAME:                      # wrong ptime: never a wrong shape
+            self.bad += 1
+            out = np.pad(out[:FRAME], (0, max(0, FRAME - len(out))))
+        return out
+
     def pull(self) -> np.ndarray:
         self.pulled += 1
         if self._next is not None and self._next in self._buf:
-            out = self.dec.decode(self._buf.pop(self._next), FRAME)
+            out = self._decode(self._buf.pop(self._next))
             self._next = (self._next + 1) & 0xFFFF
             self._misses = 0
             self.decoded += 1
         elif self._next is not None and self._buf:
             self._misses += 1
             if self._misses <= 2:
-                out = self.dec.decode(None, FRAME)          # PLC
+                out = self._decode(None)                    # PLC
                 self._next = (self._next + 1) & 0xFFFF
                 self.concealed += 1
             else:                                           # resync jump
                 self._next = _oldest(self._buf, self._next)
-                out = self.dec.decode(self._buf.pop(self._next), FRAME)
+                out = self._decode(self._buf.pop(self._next))
                 self._next = (self._next + 1) & 0xFFFF
                 self._misses = 0
                 self.decoded += 1

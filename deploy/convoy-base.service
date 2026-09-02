@@ -8,7 +8,9 @@ After=network-online.target
 Wants=network-online.target
 
 [Service]
-Type=simple
+Type=notify
+NotifyAccess=main
+WatchdogSec=20
 User=convoy
 WorkingDirectory=/opt/convoychat
 ExecStart=/usr/bin/python3 -m base.main --mode field --roster /opt/convoychat/roster.yaml

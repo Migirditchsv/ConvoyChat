@@ -38,3 +38,45 @@ class EvictionPolicy:
             self.evictions += 1
             self._bad_s = 0
             self._cooldown = self.COOLDOWN_S
+
+
+
+class HeadsetSupervisor:
+    """Self-repair for the helmet link: after `down_s` seconds of the headset
+    reporting not-connected, ask for a reconnect; back off between attempts
+    so a headset that is simply off is not hammered. Pure; actions injected."""
+    def __init__(self, reconnect_action, down_s: int = 15, backoff_s: int = 30,
+                 max_attempts: int = 6, earcon_action=lambda name: None):
+        self._reconnect = reconnect_action
+        self._earcon = earcon_action
+        self.down_s, self.backoff_s, self.max_attempts = down_s, backoff_s, max_attempts
+        self._down = 0
+        self._wait = 0
+        self.attempts = 0
+        self.repairs = 0
+        self._was_connected = True
+
+    def tick_1s(self, connected: bool | None) -> bool:
+        """-> True when a reconnect was requested this second."""
+        if connected is None:                      # unknown (no headset configured)
+            return False
+        if connected:
+            if not self._was_connected and self.attempts:
+                self.repairs += 1
+                self._earcon("connected")
+            self._was_connected = True
+            self._down = 0
+            self._wait = 0
+            self.attempts = 0
+            return False
+        self._was_connected = False
+        self._down += 1
+        if self._wait > 0:
+            self._wait -= 1
+            return False
+        if self._down >= self.down_s and self.attempts < self.max_attempts:
+            self.attempts += 1
+            self._wait = self.backoff_s
+            self._reconnect()
+            return True
+        return False

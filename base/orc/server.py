@@ -16,6 +16,7 @@ from common.protocol import make_msg, parse_msg, CONTROL_PORT
 from common.roster import Roster
 from base.mixer.api import MixerAPI
 from base.orc import ladder
+from base.orc.doctor import diagnose, summary
 
 log = logging.getLogger("convoy.orc")
 
@@ -52,6 +53,9 @@ class Orchestrator:
         self.pushes = 0
         self.mode = "hw"                     # sim | hw | field — shown to the pages
         self.radio = None                    # RadioGateway, attached by base.main
+        self.state_path: str | None = None   # operator settings survive a base restart
+        self.volumes: dict[str, int] = {}    # last known helmet volume per rider (re-pushed on join)
+        self.talk_since: dict[str, float] = {}
         self.populate()
 
     # -- lifecycle --
@@ -92,6 +96,8 @@ class Orchestrator:
         if r is None:
             return
         if is_open:
+            if pid not in self.talking:
+                self.talk_since[pid] = time.time()
             self.talking.add(pid)
             if (h := self._hang.pop(pid, None)):
                 h.cancel()
@@ -117,6 +123,7 @@ class Orchestrator:
 
     def _end_talk(self, pid: str) -> None:
         self.talking.discard(pid)
+        self.talk_since.pop(pid, None)
         self._hang.pop(pid, None)
         blockers = [p for p in self.talking
                     if ladder.DUCK.get(self.roster.riders[p].role)]
@@ -137,6 +144,7 @@ class Orchestrator:
         self.roster.riders[pid].rooms[0] = room
         self.mixer.move(pid, room)
         self._event("move", {"pid": pid, "room": room, "by": by_ui})
+        self.save_state()
         return True
 
     def on_lead_transfer(self, new_lead: str) -> bool:
@@ -150,6 +158,7 @@ class Orchestrator:
         self.roster.riders[new_lead].role = "lead"
         self.mixer.set_broadcast(new_lead)
         self._event("lead_transfer", {"lead": new_lead})
+        self.save_state()
         return True
 
     def on_heartbeat(self, pid: str, data: dict) -> None:
@@ -157,6 +166,10 @@ class Orchestrator:
             return
         prev = self.node_status.get(pid, {})
         self.node_status[pid] = {**prev, **data, "at": time.time()}
+        v = data.get("volume")
+        if isinstance(v, int) and v != self.volumes.get(pid):
+            self.volumes[pid] = v
+            self.save_state()
 
     # -- operator audio controls (compose with ladder; survive ducks) --
     def on_audio_ctl(self, pid: str, mute: bool | None = None,
@@ -172,6 +185,7 @@ class Orchestrator:
                 return False
         self._push_gains()
         self._event("audio_ctl", {"pid": pid, "mute": mute, "trim": trim})
+        self.save_state()
         return True
 
     # -- text / TTS announcements --
@@ -242,6 +256,63 @@ class Orchestrator:
         self.node_status.setdefault(frm, {})["last_ack"] = rec
         self._event("ack", {"from": frm, "cmd_id": cmd_id, "ok": rec["ok"]})
 
+    # -- settings persistence (DR-014): a base restart must not lose the ride --
+    def state(self) -> dict:
+        lead = next((r.id for r in self.roster.riders.values() if r.role == "lead"), None)
+        return {"v": 1, "muted": sorted(self.muted), "trim": dict(self.trim),
+                "rooms": {r.id: r.rooms[0] for r in self.roster.riders.values()},
+                "lead": lead, "hb_tone_default": self.hb_tone_default,
+                "volumes": dict(self.volumes), "saved_at": time.time()}
+
+    def save_state(self) -> None:
+        if not self.state_path:
+            return
+        try:
+            tmp = self.state_path + ".tmp"
+            with open(tmp, "w") as f:
+                json.dump(self.state(), f, indent=1)
+            import os
+            os.replace(tmp, self.state_path)
+        except OSError as e:
+            log.warning("could not save state to %s: %s", self.state_path, e)
+
+    def load_state(self, path: str | None = None) -> bool:
+        """Apply a saved state to the roster/mixer. Unknown riders are ignored
+        (the roster is the truth; the state is a convenience)."""
+        path = path or self.state_path
+        if not path:
+            return False
+        try:
+            with open(path) as f:
+                st = json.load(f)
+        except (OSError, ValueError):
+            return False
+        if st.get("v") != 1:
+            return False
+        for pid in st.get("muted", []):
+            if pid in self.roster.riders:
+                self.muted.add(pid)
+        for pid, t in (st.get("trim") or {}).items():
+            if pid in self.roster.riders:
+                self.trim[pid] = int(max(10, min(150, int(t))))
+        for pid, room in (st.get("rooms") or {}).items():
+            if pid in self.roster.riders and (room in self.roster.rooms or room == "lead"):
+                self.roster.riders[pid].rooms[0] = room
+                self.mixer.move(pid, room)
+        lead = st.get("lead")
+        if lead in self.roster.riders and self.roster.riders[lead].role != "music":
+            for r in self.roster.riders.values():
+                if r.role == "lead":
+                    r.role = "rider"
+            self.roster.riders[lead].role = "lead"
+            self.mixer.set_broadcast(lead)
+        self.hb_tone_default = bool(st.get("hb_tone_default", False))
+        self.volumes = {k: int(v) for k, v in (st.get("volumes") or {}).items() if k in self.roster.riders}
+        self._ladder_now = ladder.default_gains(self._participants())
+        self._push_gains()
+        self._event("state_restored", {"path": path})
+        return True
+
     def on_gps(self, kmh: float) -> None:
         try:
             self.group_speed_kmh = max(0.0, float(kmh))
@@ -255,7 +326,7 @@ class Orchestrator:
             nodes[pid] = {**st, "age_s": round(now - st.get("at", now), 1),
                           "online": (now - st.get("at", 0)) < 5.0}
         from base.media import tts
-        return {"rooms": self.roster.rooms,
+        snap = {"rooms": self.roster.rooms,
                 "riders": {r.id: {"role": r.role, "room": r.rooms[0],
                                   "muted": r.id in self.muted,
                                   "trim": self.trim.get(r.id, 100)}
@@ -271,7 +342,11 @@ class Orchestrator:
                 "mixer": self.mixer.stats(),
                 "mode": self.mode,
                 "radio": self.radio.stats() if self.radio is not None else None,
+                "talk_since": dict(self.talk_since),
                 "at": now}
+        snap["issues"] = diagnose(snap, now)
+        snap["health"] = summary(snap["issues"])
+        return snap
 
     def _event(self, kind: str, data: dict) -> None:
         self.log.append({"t": time.time(), "kind": kind, **data})
@@ -358,6 +433,8 @@ class Orchestrator:
                 self._event("node_join", {"pid": frm, "ip": self.node_status[frm]["ip"]})
                 if self.hb_tone_default:
                     await self.send_node_cmd(frm, "set_hb_tone", {"on": True})
+                if frm in self.volumes and self.volumes[frm] != 100:
+                    await self.send_node_cmd(frm, "set_volume", {"pct": self.volumes[frm]})
                 return frm
             await ws.send(make_msg("snapshot", "base", self.snapshot()))
         return None

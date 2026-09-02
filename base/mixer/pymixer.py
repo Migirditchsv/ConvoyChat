@@ -12,7 +12,9 @@ import asyncio
 import numpy as np
 
 from common.audio import FRAME, FRAME_MS, RTP_TS_STEP
-from common.opusbind import Encoder, Decoder
+from common.opusbind import Encoder, Decoder, OpusError
+import logging
+log = logging.getLogger("convoy.mixer")
 from common.protocol import rtp_pack, rtp_unpack, ssrc_of, MIXER_RTP_PORT
 from bridge.io_adapters import UdpPort
 from base.mixer.api import MixerAPI
@@ -50,6 +52,7 @@ class _Part:
         self.last_rx = 0.0
         self.plc_run = 0          # consecutive PLC frames (drives resync)
         self.resyncs = 0
+        self.bad = 0              # undecodable payloads (treated as loss)
         self.learned_host = False # out_addr host came from the uplink source (symmetric RTP)
         self.exclude: set[str] = set()   # participants this listener never hears
 
@@ -69,6 +72,7 @@ class PyMixer(MixerAPI):
         self.udp = UdpPort()
         self._task = None
         self.ticks = 0
+        self.tick_errors = 0
 
     async def start(self) -> None:
         self.udp.on_packet = self._rx
@@ -118,7 +122,7 @@ class PyMixer(MixerAPI):
             now = 0.0
         return {pid: {"room": p.room, "gain": p.gain, "active": p.active,
                       "rms": round(p.last_rms, 1), "pkts": p.pkts, "plc": p.plc,
-                      "resyncs": p.resyncs, "exclude": sorted(p.exclude),
+                      "resyncs": p.resyncs, "bad": p.bad, "exclude": sorted(p.exclude),
                       "peer": p.out_addr[0] if p.out_addr else None,
                       "rx_age_s": round(now - p.last_rx, 1) if p.last_rx else None}
                 for pid, p in self.parts.items()}
@@ -143,16 +147,34 @@ class PyMixer(MixerAPI):
         while len(p.buf) > REORDER_DEPTH:
             p.buf.pop(oldest_seq(p.buf, p.next_seq), None)
 
+    def _decode(self, p: _Part, payload: bytes | None) -> np.ndarray:
+        """Opus decode that treats a corrupt payload as a lost packet and a
+        packet of the wrong duration (a 10 ms SILK frame decodes fine — to
+        160 samples) as exactly one FRAME, so the mix arithmetic never sees
+        a shape it did not expect."""
+        try:
+            out = p.dec.decode(payload, FRAME)
+        except OpusError:
+            p.bad += 1
+            try:
+                out = p.dec.decode(None, FRAME)
+            except OpusError:
+                out = np.zeros(FRAME, dtype=np.int16)
+        if len(out) != FRAME:
+            p.bad += 1
+            out = np.pad(out[:FRAME], (0, max(0, FRAME - len(out))))
+        return out
+
     def _pop_frame(self, p: _Part) -> np.ndarray:
         if p.next_seq is not None and p.next_seq in p.buf:
-            f = p.dec.decode(p.buf.pop(p.next_seq), FRAME)
+            f = self._decode(p, p.buf.pop(p.next_seq))
             p.next_seq = (p.next_seq + 1) & 0xFFFF
             p.active = True
             p.plc_run = 0
         elif p.next_seq is not None and p.buf:
             p.plc_run += 1
             if p.plc_run <= RESYNC_AFTER_PLC:
-                f = p.dec.decode(None, FRAME)            # PLC over a short gap
+                f = self._decode(p, None)                # PLC over a short gap
                 p.plc += 1
                 p.next_seq = (p.next_seq + 1) & 0xFFFF
             else:
@@ -160,7 +182,7 @@ class PyMixer(MixerAPI):
                 # the oldest held packet instead of concealing forever while
                 # next_seq trails the live stream by a constant offset
                 p.next_seq = oldest_seq(p.buf, p.next_seq)
-                f = p.dec.decode(p.buf.pop(p.next_seq), FRAME)
+                f = self._decode(p, p.buf.pop(p.next_seq))
                 p.next_seq = (p.next_seq + 1) & 0xFFFF
                 p.active = True
                 p.plc_run = 0
@@ -176,8 +198,19 @@ class PyMixer(MixerAPI):
         loop = asyncio.get_running_loop()
         next_t = loop.time()
         while True:
+            try:
+                self._tick()
+            except Exception:                            # never let one tick end the mixer
+                self.tick_errors += 1
+                log.exception("mixer tick failed (continuing)")
+            self.ticks += 1
+            next_t += FRAME_MS / 1000
+            await asyncio.sleep(max(0.0, next_t - loop.time()))
+
+    def _tick(self) -> None:
+        if True:
             decoded = {pid: self._pop_frame(p).astype(np.int32) * p.gain // 100
-                       for pid, p in self.parts.items()}
+                       for pid, p in list(self.parts.items())}
             rooms: dict[str, np.ndarray] = {}
             for pid, p in self.parts.items():
                 rooms.setdefault(p.room, np.zeros(FRAME, np.int32))
@@ -202,6 +235,3 @@ class PyMixer(MixerAPI):
                 p.seq_out = (p.seq_out + 1) & 0xFFFF
                 p.ts_out = (p.ts_out + RTP_TS_STEP) & 0xFFFFFFFF
                 self.udp.send(pkt, p.out_addr)
-            self.ticks += 1
-            next_t += FRAME_MS / 1000
-            await asyncio.sleep(max(0.0, next_t - loop.time()))

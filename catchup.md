@@ -19,7 +19,7 @@ entry point.
 
 ## Where the truth lives
 
-1. **Tests are the spec.** 90 Tier-0 tests (S-xx), all green. If you change
+1. **Tests are the spec.** 115 Tier-0 tests (S-xx), all green. If you change
    behavior, change the test in the same commit.
 2. `docs/decisions/DR-001..009` — every deviation from the plan, with
    revisit-conditions. Add a DR when you deviate; the format is in DR-001.
@@ -37,6 +37,7 @@ entry point.
 | M1.1 real-speech fixtures; operator debug plane; `make demo` | done |
 | M1.2 LAN-ready (2026-09-02 review): rider phone page + PTT, bridge entry point, three run modes, transport fixes | done — DR-010, docs/review-2026-09-02.md |
 | M1.3 fallback layers in software: ham/GMRS gateway + bike RF failover (DR-011), hotspot + WireGuard failover (DR-012) | done — S-18..S-20; hardware-in-the-loop when rig/HT/sound cards arrive |
+| M1.4 operator self-repair: issues+fixes on /ops, bike self-check, persisted settings, watchdogs, headset supervisor, spectral fallback VAD, corrupt-packet hardening | done — DR-013/014, S-21..S-24 |
 | **M2 Bluetooth masquerade on real Pi + headsets** | **next — blocked on hardware delivery (~this week)** |
 
 Git: 7 commits on `main`, pushed to `github.com/Migirditchsv/ConvoyChat`.
@@ -55,7 +56,7 @@ CI: `.github/workflows/ci.yml` runs `make test` on ubuntu-latest.
     make up-field    # quiet base; deploy/*.service for boot-time
     make demo        # 40 s scripted ride -> demo_out/ears|mouths/*.wav, timeline
     make listen      # plays the headline recording (ears/r3_rider.wav)
-    make test        # 90 tests, ~80 s (Silero over ~25 min of audio dominates)
+    make test        # 115 tests, ~90 s (Silero over ~25 min of audio dominates)
     make status      # curl /snapshot.json from a running base
 
 `docs/runbook.md` is the copy-paste path for sim / hardware test / field.
@@ -115,7 +116,7 @@ real engines, mixer, orchestrator, agents.
 - INV-11 bridges run read-only rootfs; identity in /boot/convoy.toml
 
 Safety (may not be weakened): **SAFE-1** any DSP failure fails OPEN
-(transmit) — SafeVad demotes silero->energy->OPEN, exceptions instantly,
+(transmit) — SafeVad demotes silero->spectral->energy->OPEN, exceptions instantly,
 time-budget overruns only when sustained (3 frames, DR-007). **SAFE-2** state
 changes are audible via bridge-local earcons; earcons mix AFTER volume so a
 vol-down rider still hears alerts. **SAFE-3** lead/chase paths never get
@@ -134,7 +135,9 @@ DR-009 operator debug plane (node_cmd/ack/audio_ctl, compose rules) ·
 DR-010 rider phone page via the base, PTT, symmetric RTP, pushed snapshots,
 run modes, bridge entry point · DR-011 radio fallback (half-duplex link
 discipline, base gateway, bike failover, mixer exclude mask) · DR-012
-hotspot + WireGuard failover state machine.
+hotspot + WireGuard failover state machine · DR-013 spectral fallback VAD
++ fast floor tracker · DR-014 operator self-repair (issues/fixes, doctor,
+persisted settings, watchdog, headset supervisor).
 
 ## Gate numbers you must not "fix" blindly (DR-008)
 
@@ -209,7 +212,7 @@ is in this repo's history and DR-008.
     sim/       fixtures (+ext/ real speech & wind drop-ins), impair, convoy,
                demo (40 s tour), live (forever virtual riders)
     deploy/    roster.example.yaml, convoy.example.toml, systemd units
-    tests/     S-01..S-20 + SAFE-1 semantics — `make test` (90)
+    tests/     S-01..S-24 + SAFE-1 semantics — `make test` (115)
     tools/     bridgectl (stub) / fieldlog (heartbeats -> JSONL)
     docs/      runbook.md (three modes), review-2026-09-02.md, decisions/,
                hardware.md, ride-checklist.md
