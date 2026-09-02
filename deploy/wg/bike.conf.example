@@ -1,0 +1,9 @@
+# a bike: bridge/main runs `wg-quick up convoy` only after joining a hotspot.
+[Interface]
+Address = 10.66.0.12/24
+PrivateKey = <r2_rider.key>
+[Peer]
+PublicKey = <hub.pub>
+Endpoint = hub.example.net:51820
+AllowedIPs = 10.66.0.0/24
+PersistentKeepalive = 25

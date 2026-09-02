@@ -189,9 +189,82 @@ async def _status_lines(orc: Orchestrator, every_s: float = 5.0):
             last = line
 
 
+async def _radio_gateway(roster, mixer, orc, rf_sim: bool, log):
+    """Roster `radio:` section -> a RadioGateway participant (DR-011). In sim
+    mode (`--rf`) the rig is a SimRig on an RfChannel with one virtual
+    separated rider on an HT, so the fallback is exercised without hardware."""
+    from common.radio import RadioLink, make_ptt
+    from base.media.radio import RadioGateway
+    rcfg = dict(roster.net.get("radio") or {})
+    pid = rcfg.get("pid", "radio")
+    if not rf_sim and not rcfg:
+        return None, None
+    callsign = str(rcfg.get("callsign", "") or ("K1SIM" if rf_sim else ""))
+    if not callsign:
+        log.warning("radio: no callsign in roster net.radio — gateway will never key")
+    if pid not in roster.riders:
+        from common.roster import Rider
+        from common.protocol import ssrc_of
+        r = Rider(id=pid, role="rider", rooms=["main"], down_port=6100 + 2 * len(roster.riders))
+        r.ssrc = ssrc_of(pid)
+        roster.riders[pid] = r
+        orc.populate()
+    music = {r.id for r in roster.riders.values() if r.role == "music"}
+    mixer.set_exclude(pid, music)
+    chan = None
+    if rf_sim:
+        from sim.rf import RfChannel, SimRig
+        chan = RfChannel(noise_db=-85)
+        rig = chan.add(SimRig("gateway"))
+        rig_rx = rig_tx = rig; ptt = rig
+        await chan.start()
+    else:
+        from bridge.io_adapters import CmdSource, CmdSink
+        rig_rx = CmdSource(str(rcfg["rx_cmd"])); rig_tx = CmdSink(str(rcfg["tx_cmd"]))
+        ptt = make_ptt(str(rcfg.get("ptt", "none")))
+    link = RadioLink(ptt, callsign, service=str(rcfg.get("service", "ham")),
+                     hang_ms=int(rcfg.get("hang_ms", 600)), tot_s=float(rcfg.get("tot_s", 180)))
+    gw = RadioGateway(pid, link, rig_rx, rig_tx, mixer_addr=("127.0.0.1", mixer.rtp_port),
+                      down_port=roster.riders[pid].down_port,
+                      prefer_silero=bool(rcfg.get("silero", True)),
+                      on_vad=lambda o: orc.on_vad(pid, o))
+    await gw.start()
+    orc.radio = gw
+    log.info("radio gateway `%s` up: callsign %s, ptt %s, music excluded %s%s", pid, callsign,
+             rcfg.get("ptt", "none"), sorted(music), " (SIM RF channel)" if rf_sim else "")
+    return gw, chan
+
+
+async def _rf_virtual_rider(chan, log, callsign="K1SIM", silero: bool = True):
+    """A virtual separated rider on an HT: gated real speech goes on the air
+    through a RadioLink; whatever the gateway transmits is discarded (no ear)."""
+    from sim.rf import SimRig
+    from sim.live import LoopingMouth, _mouth_material
+    from sim import fixtures
+    from common.radio import RadioLink
+    from bridge.radio import RadioFailover
+    from bridge.engine import BridgeEngine
+    from bridge.io_adapters import ArraySink
+    import random
+    clips_raw, _ = fixtures._speech_clips()
+    winds, clips = _mouth_material(clips_raw)
+    mouth = LoopingMouth(winds[50], clips, random.Random(7), chatter_s=(15.0, 35.0))
+    rig = chan.add(SimRig("ht_rider"))
+    sink = ArraySink(); sink.write = lambda f: None
+    # Silero, deliberately: the energy fallback's slow floor tracker keys on
+    # wind for its first ~80 s, which on a shared channel is a stuck carrier
+    eng = BridgeEngine("rf_rider", mouth, sink, mixer_addr=("127.0.0.1", 1), down_port=0,
+                       prefer_silero=silero)
+    eng.radio = RadioFailover(RadioLink(rig, callsign + "/M"), rig, rig, mode="always")
+    eng.link_up = False
+    await eng.start()
+    log.info("virtual RF rider up (HT only, no Wi-Fi): talks every 15-35 s on the sim channel")
+    return eng
+
+
 async def main(roster_path: str | None, monitor: bool = False, mode: str = "hw",
                n_riders: int = 6, chatter: bool = True, http_port: int = UI_PORT,
-               open_browser: bool = False, silero: bool = True):
+               open_browser: bool = False, silero: bool = True, rf_sim: bool = False):
     roster = load_roster(roster_path) if roster_path else demo_roster(n_riders, include_music=True)
     # RTP listens on every interface unless the roster pins net.mixer_bind
     mixer = PyMixer(bind_host=str(roster.net.get("mixer_bind", "0.0.0.0")))
@@ -212,11 +285,15 @@ async def main(roster_path: str | None, monitor: bool = False, mode: str = "hw",
     http = await _serve_static(port=http_port, orc=orc)
     from base.media import tts
 
+    gw, chan = await _radio_gateway(roster, mixer, orc, rf_sim and mode == "sim", log)
+    rf_rider = await _rf_virtual_rider(chan, log, silero=True) if chan is not None else None
+
     riders = None
     if mode == "sim":
         from sim.live import VirtualRiders
         riders = VirtualRiders(roster, mixer_port=mixer.rtp_port, chatter=chatter,
-                               prefer_silero=silero, log=lambda m: log.info("%s", m))
+                               prefer_silero=silero, log=lambda m: log.info("%s", m),
+                               skip={gw.pid} if gw else None)
         await riders.start()
         if not chatter:
             log.info("chatter off: riders speak only via the phone page's TALK / say")
@@ -240,6 +317,12 @@ async def main(roster_path: str | None, monitor: bool = False, mode: str = "hw",
             status.cancel()
         if riders:
             riders.stop()
+        if rf_rider:
+            rf_rider.stop()
+        if gw:
+            gw.stop()
+        if chan:
+            chan.stop()
         mixer.stop(); announce.stop(); ws.close(); http.close()
         if mon:
             mon.close()
@@ -253,6 +336,8 @@ def cli(argv=None):
     ap.add_argument("--roster", default=None, help="roster.yaml (default: demo roster)")
     ap.add_argument("--riders", type=int, default=6, help="demo roster size (no --roster)")
     ap.add_argument("--no-chatter", action="store_true", help="sim: riders only talk on command")
+    ap.add_argument("--rf", action="store_true",
+                    help="sim: add the radio gateway on a simulated RF channel with one HT-only rider")
     ap.add_argument("--energy-vad", action="store_true",
                     help="sim: skip Silero (N riders x Silero in one process overruns SAFE-1's "
                          "50 ms budget on slow laptops and demotes them anyway)")
@@ -268,7 +353,7 @@ def cli(argv=None):
     try:
         asyncio.run(main(args.roster, args.monitor, args.mode, args.riders,
                          not args.no_chatter, args.http_port, args.open,
-                         silero=not args.energy_vad))
+                         silero=not args.energy_vad, rf_sim=args.rf))
     except KeyboardInterrupt:
         print("\nbase stopped")
 

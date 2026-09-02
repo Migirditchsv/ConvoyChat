@@ -99,7 +99,8 @@ class VirtualRiders:
     base: RTP to `mixer_port`, control to `control_url`."""
     def __init__(self, roster, mixer_port: int = 5100, control_url: str | None = None,
                  chatter: bool = True, prefer_silero: bool = True, seed: int = 1,
-                 log=lambda msg: None):
+                 log=lambda msg: None, skip: set[str] | None = None):
+        """skip: roster ids already served by something else (the radio gateway)."""
         self.roster = roster
         self.mixer_port = mixer_port
         self.control_url = control_url or f"ws://127.0.0.1:{CONTROL_PORT}/"
@@ -113,12 +114,14 @@ class VirtualRiders:
         self.sinks: dict[str, SinkRing] = {}
         self.proxies: list[ImpairProxy] = []
         self.speeds: dict[str, int] = {}
+        self.skip = set(skip or ())
 
     async def start(self) -> None:
         fixtures.build()
         clips_raw, _ = fixtures._speech_clips()
         winds, clips = _mouth_material(clips_raw)
-        riders = [r for r in self.roster.riders.values() if r.role != "music"]
+        riders = [r for r in self.roster.riders.values()
+                  if r.role != "music" and r.id not in self.skip]
         for k, r in enumerate(riders):
             speed = SPEEDS[k % len(SPEEDS)]
             self.speeds[r.id] = speed

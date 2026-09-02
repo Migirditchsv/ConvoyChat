@@ -23,4 +23,8 @@ class MixerAPI(ABC):
     def set_broadcast(self, pid: str | None) -> None:
         """This participant's audio is added ONCE to every room (lead-tee, plan S-2)."""
     @abstractmethod
+    def set_exclude(self, pid: str, excluded: set[str]) -> None:
+        """Listener `pid` never hears `excluded` participants (N-k). Used by the
+        radio gateway (no music over the air) and, later, personal music mute."""
+    @abstractmethod
     def stats(self) -> dict: ...

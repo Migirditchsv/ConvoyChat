@@ -6,7 +6,7 @@ hardware traps). The two governing design artifacts are owned by Sam; ask
 him for links if you need the deep rationale.
 
 Ground rules:
-- **Tests are the spec.** `make test` (57 green) before and after your work;
+- **Tests are the spec.** `make test` (90 green) before and after your work;
   behavior changes land with their test in the same commit.
 - Never weaken an INV-* or SAFE-* without Sam's explicit sign-off; record
   any deviation as `docs/decisions/DR-NNN-*.md` (format in DR-001).

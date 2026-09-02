@@ -1,0 +1,17 @@
+# VPS hub: routes between spokes. Replace keys; keep addresses.
+[Interface]
+Address = 10.66.0.254/24
+ListenPort = 51820
+PrivateKey = <hub.key>
+PostUp = sysctl -w net.ipv4.ip_forward=1
+# base
+[Peer]
+PublicKey = <base.pub>
+AllowedIPs = 10.66.0.1/32
+# bikes: one block each, 10.66.0.10 + index
+[Peer]
+PublicKey = <r0_lead.pub>
+AllowedIPs = 10.66.0.10/32
+[Peer]
+PublicKey = <r2_rider.pub>
+AllowedIPs = 10.66.0.12/32

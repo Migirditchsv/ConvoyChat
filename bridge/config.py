@@ -35,6 +35,23 @@ class BridgeConfig:
     node_token: str = ""
     prefer_silero: bool = True
     speed_kmh: float = 0.0        # static wind estimate until GPS lands
+    # [radio] wired HT fallback (DR-011)
+    radio_mode: str = "off"       # off | auto (RF only when the base is unreachable) | always
+    radio_callsign: str = ""      # REQUIRED to transmit; empty = interlocked
+    radio_service: str = "ham"    # ham | gmrs (ID interval)
+    radio_ptt: str = "none"       # gpio:17 | gpio:17:low | serial:/dev/ttyUSB0:rts | none
+    radio_rx_cmd: str = ""        # raw s16le/16k/mono from the rig's speaker (arecord/pw-record)
+    radio_tx_cmd: str = ""        # raw s16le/16k/mono into the rig's mic (aplay/pw-play)
+    radio_hang_ms: int = 600
+    radio_tot_s: float = 180.0
+    # [failover] hotspot + WireGuard (DR-012)
+    failover_enabled: bool = False
+    failover_star_ssid: str = "convoy"
+    failover_hotspots: list = field(default_factory=list)
+    failover_tunnel_base: str = "10.66.0.1"
+    failover_wg_iface: str = "convoy"
+    failover_fail_s: int = 8
+    failover_restore_s: int = 12
     raw: dict = field(default_factory=dict)
 
     @property
@@ -53,6 +70,8 @@ def from_dict(doc: dict) -> BridgeConfig:
     wifi = doc.get("wifi", {}) or {}
     actions = doc.get("actions", {}) or {}
     net = doc.get("net", {}) or {}
+    radio = doc.get("radio", {}) or {}
+    fo = doc.get("failover", {}) or {}
     cfg = BridgeConfig(
         node_id=str(node.get("id", "")),
         base_host=str(node.get("base", "127.0.0.1")),
@@ -68,7 +87,27 @@ def from_dict(doc: dict) -> BridgeConfig:
         node_token=str(net.get("node_token", "")),
         prefer_silero=bool(audio.get("prefer_silero", True)),
         speed_kmh=float(node.get("speed_kmh", 0.0)),
+        radio_mode=str(radio.get("mode", "off")),
+        radio_callsign=str(radio.get("callsign", "")),
+        radio_service=str(radio.get("service", "ham")),
+        radio_ptt=str(radio.get("ptt", "none")),
+        radio_rx_cmd=str(radio.get("rx_cmd", "")),
+        radio_tx_cmd=str(radio.get("tx_cmd", "")),
+        radio_hang_ms=int(radio.get("hang_ms", 600)),
+        radio_tot_s=float(radio.get("tot_s", 180.0)),
+        failover_enabled=bool(fo.get("enabled", False)),
+        failover_star_ssid=str(fo.get("star_ssid", "convoy")),
+        failover_hotspots=[str(x) for x in (fo.get("hotspots", []) or [])],
+        failover_tunnel_base=str(fo.get("tunnel_base", "10.66.0.1")),
+        failover_wg_iface=str(fo.get("wg_iface", "convoy")),
+        failover_fail_s=int(fo.get("fail_s", 8)),
+        failover_restore_s=int(fo.get("restore_s", 12)),
         raw=doc)
+    if cfg.radio_mode not in ("off", "auto", "always"):
+        raise ValueError("convoy.toml: [radio] mode must be off | auto | always")
+    if cfg.radio_mode != "off" and not cfg.radio_callsign:
+        raise ValueError("convoy.toml: [radio] callsign is required to enable the radio "
+                         "(the link refuses to key without one)")
     cfg.node_id = os.environ.get("CONVOY_NODE_ID", cfg.node_id)
     cfg.base_host = os.environ.get("CONVOY_BASE", cfg.base_host)
     if not cfg.node_id:

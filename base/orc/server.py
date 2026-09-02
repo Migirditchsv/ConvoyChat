@@ -51,6 +51,7 @@ class Orchestrator:
         self._push_task = None
         self.pushes = 0
         self.mode = "hw"                     # sim | hw | field — shown to the pages
+        self.radio = None                    # RadioGateway, attached by base.main
         self.populate()
 
     # -- lifecycle --
@@ -269,6 +270,7 @@ class Orchestrator:
                 "nodes": nodes,
                 "mixer": self.mixer.stats(),
                 "mode": self.mode,
+                "radio": self.radio.stats() if self.radio is not None else None,
                 "at": now}
 
     def _event(self, kind: str, data: dict) -> None:

@@ -294,7 +294,9 @@ class BridgeAgent:
                 "hb_tone": e.hb_tone if e else False,
                 "vad_state": bool(e and e.stats.get("vad_open")),
                 "ptt": bool(e and e.stats.get("ptt")),
-                "headset": getattr(self.actions, "last_headset", None)}
+                "headset": getattr(self.actions, "last_headset", None),
+                "radio": e.radio.stats() if (e is not None and getattr(e, "radio", None)) else None,
+                "link_up": bool(e.link_up) if e is not None else None}
 
     async def _heartbeats(self, ws):
         while True:
@@ -339,6 +341,16 @@ class BridgeAgent:
             await self._send(ws, "ack", {"cmd_id": cmd_id, "ok": True, "detail": detail})
         except Exception as e:
             await self._send(ws, "ack", {"cmd_id": cmd_id, "ok": False, "detail": str(e)})
+
+    def set_base_url(self, url: str) -> None:
+        """Re-target the control link at runtime; the open socket is closed so
+        the reconnect loop dials the new base."""
+        if url == self.base_url:
+            return
+        self.base_url = url
+        ws = self._ws
+        if ws is not None:
+            asyncio.get_running_loop().create_task(ws.close())
 
     def stop(self):
         if self._task:

@@ -4,6 +4,13 @@ version: 1
 net:
   mixer_bind: 0.0.0.0      # RTP bind address (0.0.0.0 = every interface)
   # node_token: change-me  # optional shared secret bridges must present in hello
+  # radio:                 # wired HT on the base = the room goes on the air (DR-011)
+  #   pid: radio           # appears as a rider card on /ops; music never reaches it
+  #   callsign: K1ABC      # REQUIRED — the link never keys without one
+  #   service: ham         # ham | gmrs
+  #   ptt: serial:/dev/ttyUSB0:rts     # or gpio:17 on a Pi base
+  #   rx_cmd: "arecord -q -D plughw:1,0 -f S16_LE -r 16000 -c 1 -t raw -"
+  #   tx_cmd: "aplay -q -D plughw:1,0 -f S16_LE -r 16000 -c 1 -t raw -"
 rooms: [main, nav]
 riders:
   - id: r0_lead            # ids are free text; they become the phone page's names

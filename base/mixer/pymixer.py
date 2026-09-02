@@ -51,6 +51,7 @@ class _Part:
         self.plc_run = 0          # consecutive PLC frames (drives resync)
         self.resyncs = 0
         self.learned_host = False # out_addr host came from the uplink source (symmetric RTP)
+        self.exclude: set[str] = set()   # participants this listener never hears
 
 
 class PyMixer(MixerAPI):
@@ -88,6 +89,8 @@ class PyMixer(MixerAPI):
             if old.out_addr[0] != out_addr[0] and old.learned_host:
                 p.out_addr = (old.out_addr[0], out_addr[1])
                 p.learned_host = True
+        if old is not None:
+            p.exclude = set(old.exclude)
         self.parts[pid] = p
         self._by_ssrc[p.ssrc] = p
 
@@ -105,6 +108,9 @@ class PyMixer(MixerAPI):
     def set_broadcast(self, pid) -> None:
         self.broadcast_pid = pid
 
+    def set_exclude(self, pid, excluded) -> None:
+        self.parts[pid].exclude = set(excluded) - {pid}
+
     def stats(self) -> dict:
         try:
             now = asyncio.get_event_loop().time()
@@ -112,7 +118,7 @@ class PyMixer(MixerAPI):
             now = 0.0
         return {pid: {"room": p.room, "gain": p.gain, "active": p.active,
                       "rms": round(p.last_rms, 1), "pkts": p.pkts, "plc": p.plc,
-                      "resyncs": p.resyncs,
+                      "resyncs": p.resyncs, "exclude": sorted(p.exclude),
                       "peer": p.out_addr[0] if p.out_addr else None,
                       "rx_age_s": round(now - p.last_rx, 1) if p.last_rx else None}
                 for pid, p in self.parts.items()}
@@ -184,8 +190,13 @@ class PyMixer(MixerAPI):
                 if p.out_addr is None or p.enc is None:
                     continue
                 mix = rooms[p.room] - decoded[pid]        # N-1 (INV-6)
+                for ex in p.exclude:                       # N-k: listener-specific mutes
+                    xp = self.parts.get(ex)
+                    if xp is not None and xp.room == p.room:
+                        mix = mix - decoded[ex]
                 if bcast is not None and bp.room != p.room and pid != self.broadcast_pid:
-                    mix = mix + bcast
+                    if self.broadcast_pid not in p.exclude:
+                        mix = mix + bcast
                 pcm = np.clip(mix, -32768, 32767).astype(np.int16)
                 pkt = rtp_pack(p.seq_out, p.ts_out, p.ssrc, p.enc.encode(pcm))
                 p.seq_out = (p.seq_out + 1) & 0xFFFF

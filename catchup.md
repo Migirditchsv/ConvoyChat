@@ -19,7 +19,7 @@ entry point.
 
 ## Where the truth lives
 
-1. **Tests are the spec.** 57 Tier-0 tests (S-xx), all green. If you change
+1. **Tests are the spec.** 90 Tier-0 tests (S-xx), all green. If you change
    behavior, change the test in the same commit.
 2. `docs/decisions/DR-001..009` — every deviation from the plan, with
    revisit-conditions. Add a DR when you deviate; the format is in DR-001.
@@ -36,6 +36,7 @@ entry point.
 | M1 virtual convoy: mixer, orchestrator, dashboard, media | done |
 | M1.1 real-speech fixtures; operator debug plane; `make demo` | done |
 | M1.2 LAN-ready (2026-09-02 review): rider phone page + PTT, bridge entry point, three run modes, transport fixes | done — DR-010, docs/review-2026-09-02.md |
+| M1.3 fallback layers in software: ham/GMRS gateway + bike RF failover (DR-011), hotspot + WireGuard failover (DR-012) | done — S-18..S-20; hardware-in-the-loop when rig/HT/sound cards arrive |
 | **M2 Bluetooth masquerade on real Pi + headsets** | **next — blocked on hardware delivery (~this week)** |
 
 Git: 7 commits on `main`, pushed to `github.com/Migirditchsv/ConvoyChat`.
@@ -54,7 +55,7 @@ CI: `.github/workflows/ci.yml` runs `make test` on ubuntu-latest.
     make up-field    # quiet base; deploy/*.service for boot-time
     make demo        # 40 s scripted ride -> demo_out/ears|mouths/*.wav, timeline
     make listen      # plays the headline recording (ears/r3_rider.wav)
-    make test        # 57 tests, ~70 s (Silero over ~25 min of audio dominates)
+    make test        # 90 tests, ~80 s (Silero over ~25 min of audio dominates)
     make status      # curl /snapshot.json from a running base
 
 `docs/runbook.md` is the copy-paste path for sim / hardware test / field.
@@ -131,7 +132,9 @@ DR-007 SAFE-1 sustained-overrun demotion · DR-008 post-band-limit fixture
 calibration + speed-profile gate (see "gate numbers" below) ·
 DR-009 operator debug plane (node_cmd/ack/audio_ctl, compose rules) ·
 DR-010 rider phone page via the base, PTT, symmetric RTP, pushed snapshots,
-run modes, bridge entry point.
+run modes, bridge entry point · DR-011 radio fallback (half-duplex link
+discipline, base gateway, bike failover, mixer exclude mask) · DR-012
+hotspot + WireGuard failover state machine.
 
 ## Gate numbers you must not "fix" blindly (DR-008)
 
@@ -176,6 +179,11 @@ is in this repo's history and DR-008.
 9. Browser-driven smoke test of /rider (Playwright is a 30-line add; see
    docs/review-2026-09-02.md O4) and the "substantial improvements" list
    there (bridge-local rider page, RTCP-lite expected-loss, roster reload).
+10. Hardware-in-the-loop for the fallbacks: real HT on a USB sound card /
+    I2S HAT with serial-RTS or GPIO PTT (runbook §4); a rider hotspot + a
+    WireGuard hub (runbook §5). Software is tested to the frame/second on
+    fakes (S-18..S-20) and in `base.main --mode sim --rf`; the shells
+    (arecord/aplay, nmcli, wg-quick) are dry-run until [actions] enabled.
 
 ## Traps the hardware week will meet (all sourced in the trade study)
 
@@ -201,7 +209,7 @@ is in this repo's history and DR-008.
     sim/       fixtures (+ext/ real speech & wind drop-ins), impair, convoy,
                demo (40 s tour), live (forever virtual riders)
     deploy/    roster.example.yaml, convoy.example.toml, systemd units
-    tests/     S-01..S-17 + SAFE-1 semantics — `make test` (57)
+    tests/     S-01..S-20 + SAFE-1 semantics — `make test` (90)
     tools/     bridgectl (stub) / fieldlog (heartbeats -> JSONL)
     docs/      runbook.md (three modes), review-2026-09-02.md, decisions/,
                hardware.md, ride-checklist.md

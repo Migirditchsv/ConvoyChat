@@ -41,6 +41,8 @@ class BridgeEngine:
         self._loss_cache: float | None = None
         self._loss_at = 0.0
         self._ptt_frames_left = 0     # dead-man: PTT releases itself unless refreshed
+        self.radio = None             # bridge.radio.RadioFailover, attached by bridge/main
+        self.link_up = True           # base reachable over Wi-Fi (bridge/main maintains)
 
     def _on_degrade(self, mode: str) -> None:
         self.stats["vad_mode"] = mode
@@ -95,6 +97,15 @@ class BridgeEngine:
             for pkt in self.up.feed(frame):
                 self.udp.send(pkt, self.mixer_addr)
                 self.stats["tx_pkts"] += 1
+            if self.radio is not None:
+                try:
+                    aux = self.radio.on_tick(self.up.last_tx, self.link_up,
+                                             vad_mode=self.up.vad.mode,
+                                             ptt=bool(self.stats.get("ptt")))
+                except Exception:
+                    aux = None                     # SAFE-1 spirit: the rig never stops the tick
+                if aux is not None:
+                    self.down.push_aux(aux)
             self.stats["vad_open"] = self.up.gate.is_open
             self._frame_n += 1
             if self.hb_tone and self._frame_n % self._hb_every == 0:
@@ -117,6 +128,11 @@ class BridgeEngine:
 
     def set_hb_tone(self, on: bool) -> None:
         self.hb_tone = bool(on)
+
+    def set_mixer_addr(self, addr: tuple[str, int]) -> None:
+        """Re-target the uplink at runtime (failover to a tunnelled base)."""
+        self.mixer_addr = (str(addr[0]), int(addr[1]))
+        self.stats["mixer"] = f"{self.mixer_addr[0]}:{self.mixer_addr[1]}"
 
     def downlink_loss_pct(self, min_interval_s: float = 1.0) -> float | None:
         """Loss the rider hears over the last window (concealed / arrived+concealed).

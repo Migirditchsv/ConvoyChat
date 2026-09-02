@@ -1,0 +1,9 @@
+# chase-car base: always up, so tunnelled bikes find it the moment they arrive.
+[Interface]
+Address = 10.66.0.1/24
+PrivateKey = <base.key>
+[Peer]
+PublicKey = <hub.pub>
+Endpoint = hub.example.net:51820
+AllowedIPs = 10.66.0.0/24
+PersistentKeepalive = 25

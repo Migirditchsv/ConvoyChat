@@ -37,6 +37,7 @@ class UplinkChain:
         self._seq = 0
         self._ts = 0
         self._was_open = False
+        self.last_tx: list[np.ndarray] = []   # gated PCM of the last feed() (radio tap)
 
     def set_speed(self, kmh: float) -> None:
         self.speed_kmh = kmh
@@ -51,8 +52,10 @@ class UplinkChain:
             self._was_open = is_open
             self.on_vad(is_open)
         pkts = []
+        self.last_tx = []
         for f in tx:
             f = self.agc.process(f)
+            self.last_tx.append(f)
             payload = self.enc.encode(f)
             pkts.append(rtp_pack(self._seq, self._ts, self.ssrc, payload))
             self._seq = (self._seq + 1) & 0xFFFF
@@ -70,6 +73,7 @@ class DownlinkChain:
         self._next: int | None = None
         self._earcons: deque[np.ndarray] = deque()
         self._misses = 0
+        self._aux: np.ndarray | None = None   # extra audio for the next pull (RF rx)
         self.pulled = 0           # frames handed to the sink
         self.decoded = 0          # ... from a real packet
         self.concealed = 0        # ... PLC (a packet the mixer sent never arrived)
@@ -84,6 +88,12 @@ class DownlinkChain:
             self._next = seq
         while len(self._buf) > self.depth * 4:      # runaway guard
             self._buf.pop(_oldest(self._buf, self._next), None)
+
+    def push_aux(self, frame: np.ndarray) -> None:
+        """Mix `frame` into the next pull BEFORE volume (it is programme audio,
+        e.g. the rig's received speech — not an alert)."""
+        f = np.asarray(frame, dtype=np.int32)
+        self._aux = f if self._aux is None else self._aux + f
 
     def queue_earcon(self, pcm: np.ndarray) -> None:
         for i in range(0, len(pcm), FRAME):
@@ -113,6 +123,9 @@ class DownlinkChain:
                 self.decoded += 1
         else:
             out = np.zeros(FRAME, dtype=np.int16)
+        if self._aux is not None:
+            out = np.clip(out.astype(np.int32) + self._aux[:FRAME], -32768, 32767).astype(np.int16)
+            self._aux = None
         if self.volume_pct != 100:
             out = np.clip(out.astype(np.int32) * self.volume_pct // 100,
                           -32768, 32767).astype(np.int16)
