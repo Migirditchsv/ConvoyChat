@@ -88,6 +88,21 @@ On the Nighthawk: give the base a DHCP reservation so the URL never
 changes; enable OFDMA (stock AX firmware ships it off); 5 GHz only for the
 bridges (INV-4). Record the unit in docs/hardware.md.
 
+**If something is wrong, look at the top of `/ops` first.** The Issues
+strip says what is wrong in a sentence and offers the fix as a button
+("Reconnect headset", "Unmute", "Set volume 100%", "Release PTT", "Move to
+main", "Reboot bridge") or as a physical hint ("power-cycle", "close up").
+The header badge summarises: `all good`, `1 problem, 2 warnings`. Each
+rider card has **check bike**: the bridge runs its own self-check and the
+card shows every failed probe with its remedy (undervoltage, dongle,
+headset, mic/speaker pipe, Wi-Fi, base link, callsign). On the bike itself
+the same check is `python3 -m bridge.main --config /boot/convoy.toml --doctor`.
+
+Operator settings (mute, trim, rooms, lead, heartbeat tone, each rider's
+helmet volume) are saved to `convoy-state.json` beside the roster on every
+change and restored when the base restarts, so a crash or reboot mid-ride
+does not undo the ride. Delete the file to start clean.
+
 Diagnostics while it runs:
 
     make status                                 # snapshot.json, pretty
@@ -172,7 +187,11 @@ Bridge (each Pi):
     # read-only rootfs (INV-11): sudo raspi-config -> Performance -> Overlay FS -> enable
     # identity stays writable on /boot; pairing writes headset_mac there BEFORE you flip RO
 
-Field-mode behaviour: `Restart=always` on both units; the bridge's audio
+Field-mode behaviour: both units are `Type=notify` with a systemd watchdog
+(20 s base, 15 s bridge) fed only while the audio tick advances, so a wedged
+process is restarted, not just a crashed one; `Restart=always` on both;
+a headset that drops is reconnected by the bridge after 15 s (30 s
+back-off, six tries, "connected" earcon on recovery); the bridge's audio
 commands are supervised (a dead pw-record is restarted with link-lost /
 connected earcons so the rider knows); the control link reconnects every
 2 s forever; the eviction policy cycles Wi-Fi after 3 s below 12 Mb/s or

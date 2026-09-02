@@ -55,10 +55,13 @@ class RtpSource:
                 pos = 0
             frame = self.pcm[pos:pos + FRAME]
             pos += FRAME
-            pkt = rtp_pack(self._seq, self._ts, self.ssrc, self.enc.encode(frame))
-            self._seq = (self._seq + 1) & 0xFFFF
-            self._ts = (self._ts + RTP_TS_STEP) & 0xFFFFFFFF
-            self.udp.send(pkt, self.mixer_addr)
+            try:
+                pkt = rtp_pack(self._seq, self._ts, self.ssrc, self.enc.encode(frame))
+                self._seq = (self._seq + 1) & 0xFFFF
+                self._ts = (self._ts + RTP_TS_STEP) & 0xFFFFFFFF
+                self.udp.send(pkt, self.mixer_addr)
+            except Exception:
+                pass                                  # a bad frame never ends the source
             next_t += FRAME_MS / 1000
             await asyncio.sleep(max(0.0, next_t - loop.time()))
 

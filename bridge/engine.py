@@ -5,7 +5,7 @@ import asyncio
 
 import numpy as np
 
-from common.audio import FRAME_MS
+from common.audio import FRAME, FRAME_MS
 from common.dsp import tone
 from common import earcons
 from common.protocol import MIXER_RTP_PORT
@@ -91,32 +91,51 @@ class BridgeEngine:
         loop = asyncio.get_running_loop()
         next_t = loop.time()
         while True:
-            frame = self.source.read()
-            if frame is None:
-                break
-            for pkt in self.up.feed(frame):
-                self.udp.send(pkt, self.mixer_addr)
-                self.stats["tx_pkts"] += 1
-            if self.radio is not None:
+            try:
+                if not self._tick():
+                    break
+            except Exception:
+                # SAFE-1 spirit: a bad frame, a mic hiccup or a codec error must
+                # never stop the helmet tick. Count it, push silence, carry on.
+                self.stats["tick_errors"] = self.stats.get("tick_errors", 0) + 1
                 try:
-                    aux = self.radio.on_tick(self.up.last_tx, self.link_up,
-                                             vad_mode=self.up.vad.mode,
-                                             ptt=bool(self.stats.get("ptt")))
+                    self.sink.write(np.zeros(FRAME, dtype=np.int16))
                 except Exception:
-                    aux = None                     # SAFE-1 spirit: the rig never stops the tick
-                if aux is not None:
-                    self.down.push_aux(aux)
-            self.stats["vad_open"] = self.up.gate.is_open
-            self._frame_n += 1
-            if self.hb_tone and self._frame_n % self._hb_every == 0:
-                self.down.queue_earcon(tone(880, 0.03, level_db=-30))
-            if self._ptt_frames_left > 0:
-                self._ptt_frames_left -= 1
-                if self._ptt_frames_left == 0:
-                    self._release_ptt(auto=True)
-            self.sink.write(self.down.pull())
+                    pass
             next_t += FRAME_MS / 1000
             await asyncio.sleep(max(0.0, next_t - loop.time()))
+
+    def _tick(self) -> bool:
+        frame = self.source.read()
+        if frame is None:
+            return False
+        try:
+            pkts = self.up.feed(frame)
+        except Exception:
+            self.stats["tick_errors"] = self.stats.get("tick_errors", 0) + 1
+            pkts = []
+        for pkt in pkts:
+            self.udp.send(pkt, self.mixer_addr)
+            self.stats["tx_pkts"] += 1
+        if self.radio is not None:
+            try:
+                aux = self.radio.on_tick(self.up.last_tx, self.link_up,
+                                         vad_mode=self.up.vad.mode,
+                                         ptt=bool(self.stats.get("ptt")))
+            except Exception:
+                aux = None                     # the rig never stops the tick
+            if aux is not None:
+                self.down.push_aux(aux)
+        self.stats["vad_open"] = self.up.gate.is_open
+        self._frame_n += 1
+        if self.hb_tone and self._frame_n % self._hb_every == 0:
+            self.down.queue_earcon(tone(880, 0.03, level_db=-30))
+        if self._ptt_frames_left > 0:
+            self._ptt_frames_left -= 1
+            if self._ptt_frames_left == 0:
+                self._release_ptt(auto=True)
+        self.sink.write(self.down.pull())
+        return True
 
     # -- remote-adjustable QoL controls (driven by the agent) --
     def set_volume(self, pct: int) -> None:

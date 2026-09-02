@@ -262,14 +262,36 @@ async def _rf_virtual_rider(chan, log, callsign="K1SIM", silero: bool = True):
     return eng
 
 
+async def _watchdog(mixer: PyMixer, orc: Orchestrator):
+    """systemd watchdog: WATCHDOG=1 only while the mixer tick advances."""
+    from common.sdnotify import SdNotify
+    sd = SdNotify()
+    sd.ready()
+    last = mixer.ticks
+    while True:
+        await asyncio.sleep(2.0)
+        if mixer.ticks > last:
+            sd.watchdog()
+            sd.status(orc.snapshot().get("health", ""))
+        last = mixer.ticks
+
+
 async def main(roster_path: str | None, monitor: bool = False, mode: str = "hw",
                n_riders: int = 6, chatter: bool = True, http_port: int = UI_PORT,
-               open_browser: bool = False, silero: bool = True, rf_sim: bool = False):
+               open_browser: bool = False, silero: bool = True, rf_sim: bool = False,
+               state_path: str | None = None):
     roster = load_roster(roster_path) if roster_path else demo_roster(n_riders, include_music=True)
     # RTP listens on every interface unless the roster pins net.mixer_bind
     mixer = PyMixer(bind_host=str(roster.net.get("mixer_bind", "0.0.0.0")))
     orc = Orchestrator(roster, mixer)
     orc.mode = mode
+    if state_path is None and mode != "sim":
+        state_path = os.path.join(os.path.dirname(os.path.abspath(roster_path)) if roster_path else ".",
+                                  "convoy-state.json")
+    if state_path:
+        orc.state_path = state_path
+        if orc.load_state():
+            log.info("operator settings restored from %s", state_path)
 
     # announcements: always wired, so the dashboard's "speak" works day one
     announce = QueuedRtpSource("announce",
@@ -310,11 +332,13 @@ async def main(roster_path: str | None, monitor: bool = False, mode: str = "hw",
         subprocess.Popen(["xdg-open", f"http://localhost:{http_port}/"],
                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     status = asyncio.create_task(_status_lines(orc)) if mode == "hw" else None
+    wd = asyncio.create_task(_watchdog(mixer, orc))
     try:
         await asyncio.Event().wait()
     finally:
         if status:
             status.cancel()
+        wd.cancel()
         if riders:
             riders.stop()
         if rf_rider:
@@ -344,6 +368,9 @@ def cli(argv=None):
     ap.add_argument("--monitor", action="store_true",
                     help="play room `main` through this machine's speakers")
     ap.add_argument("--http-port", type=int, default=UI_PORT)
+    ap.add_argument("--state", default=None,
+                    help="where operator settings (mute/trim/rooms/lead/volumes) persist "
+                         "(default: convoy-state.json beside the roster; none in sim)")
     ap.add_argument("--open", action="store_true", help="xdg-open the landing page")
     args = ap.parse_args(argv)
     level = {"sim": logging.INFO, "hw": logging.INFO, "field": logging.WARNING}[args.mode]
@@ -353,7 +380,7 @@ def cli(argv=None):
     try:
         asyncio.run(main(args.roster, args.monitor, args.mode, args.riders,
                          not args.no_chatter, args.http_port, args.open,
-                         silero=not args.energy_vad, rf_sim=args.rf))
+                         silero=not args.energy_vad, rf_sim=args.rf, state_path=args.state))
     except KeyboardInterrupt:
         print("\nbase stopped")
 

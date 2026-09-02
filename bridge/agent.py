@@ -20,7 +20,7 @@ from common import earcons
 # dashboard only ever send these; anything else is acked ok=False.
 COMMANDS = ("reboot", "reconnect_bt", "reconnect_wifi", "set_volume",
             "adjust_volume", "identify", "set_hb_tone", "ptt",
-            "bt_scan", "bt_pair", "bt_status", "say")
+            "bt_scan", "bt_pair", "bt_status", "say", "doctor")
 
 
 class SimActions:
@@ -112,6 +112,18 @@ class SimActions:
         cur = next((h for h in self.headsets if h["connected"]), None)
         self.last_headset = dict(cur) if cur else None
         return {"headset": cur, "codec": "mSBC" if cur else None}
+
+    async def doctor(self):
+        """Self-check the operator can run from the ops page. Sim: all green."""
+        self.calls.append(("doctor",))
+        return {"checks": [
+            {"name": "config", "ok": True, "detail": "sim node", "remedy": ""},
+            {"name": "bluetooth dongle", "ok": True, "detail": "simulated", "remedy": ""},
+            {"name": "headset", "ok": bool(self.last_headset and self.last_headset.get("connected")),
+             "detail": (self.last_headset or {}).get("name", "none"), "remedy": "pair from the phone page"},
+            {"name": "audio pipes", "ok": True, "detail": "array IO", "remedy": ""},
+            {"name": "power", "ok": True, "detail": "no undervoltage", "remedy": ""},
+        ]}
 
     async def say(self, clip: int = 0):
         """Sim only: the virtual rider says something (drives the real gate)."""
@@ -219,6 +231,71 @@ class DeviceActions(SimActions):
     async def say(self, clip: int = 0):
         raise RuntimeError("say is a virtual-rider command; on hardware use PTT")
 
+    # -- device self-check --------------------------------------------------
+    def _run(self, cmd: str) -> str:
+        """Synchronous helper for doctor probes (short, read-only commands)."""
+        import subprocess
+        try:
+            return subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=5).stdout
+        except (subprocess.SubprocessError, OSError):
+            return ""
+
+    async def doctor(self, cfg=None, agent_connected: bool | None = None,
+                     source_alive: bool | None = None, sink_alive: bool | None = None):
+        """Read-only checks with a remedy for each failure. Never changes state."""
+        import shutil
+        checks = []
+        def add(name, ok, detail, remedy=""):
+            checks.append({"name": name, "ok": bool(ok), "detail": str(detail)[:160],
+                           "remedy": remedy if not ok else ""})
+        # power: vcgencmd get_throttled bit 0 = undervoltage now, bit 16 = has occurred
+        thr = self._run("vcgencmd get_throttled 2>/dev/null").strip()
+        flags = parse_throttled(thr)
+        add("power", not flags["undervoltage_now"],
+            "undervoltage NOW" if flags["undervoltage_now"] else
+            ("undervoltage happened earlier" if flags["undervoltage_past"] else (thr or "vcgencmd unavailable")),
+            "cable too thin or supply too weak: use a 5.1 V/2.5 A supply and a short thick cable")
+        # bluetooth controller (the USB dongle)
+        ctl = self._run("bluetoothctl list 2>/dev/null").strip()
+        add("bluetooth dongle", bool(ctl), ctl or "no controller",
+            "plug the USB Bluetooth dongle in (INV-3: onboard BT is disabled); check `lsusb`")
+        hs = self.last_headset
+        add("headset", bool(hs and hs.get("connected")),
+            f"{hs.get('name', '?')} {'connected' if hs and hs.get('connected') else 'NOT connected'}" if hs
+            else "none paired", "pair from the phone page, or `bluetoothctl connect <mac>`")
+        for label, cmd in (("mic command", getattr(cfg, "source_cmd", "")),
+                           ("speaker command", getattr(cfg, "sink_cmd", ""))):
+            exe = (cmd.split() or [""])[0]
+            add(label, bool(exe) and shutil.which(exe) is not None, cmd or "not set",
+                f"install `{exe}` (pipewire-audio-client-libraries or alsa-utils)")
+        if source_alive is not None:
+            add("mic pipe", source_alive, "running" if source_alive else "DOWN",
+                "the mic command exited: check the PipeWire/bluealsa device name in convoy.toml")
+        if sink_alive is not None:
+            add("speaker pipe", sink_alive, "running" if sink_alive else "DOWN",
+                "the speaker command exited: check the device name in convoy.toml")
+        iface = getattr(cfg, "wifi_iface", self.wifi_iface)
+        wl = self._run(f"iw dev {iface} link 2>/dev/null").strip()
+        add("wifi", wl.startswith("Connected"), wl.splitlines()[0] if wl else "not associated",
+            "join the convoy Wi-Fi: `nmcli con up id convoy`; is the car's AP on?")
+        if agent_connected is not None:
+            add("base link", agent_connected, "control WebSocket up" if agent_connected else "base unreachable",
+                "check [node] base in convoy.toml and that the base is running (`make up`)")
+        add("callsign", not (getattr(cfg, "radio_mode", "off") != "off" and not getattr(cfg, "radio_callsign", "")),
+            getattr(cfg, "radio_callsign", "") or "none (radio off)", "set [radio] callsign or the rig never keys")
+        return {"checks": checks, "ok": all(c["ok"] for c in checks)}
+
+
+def parse_throttled(text: str) -> dict:
+    """vcgencmd get_throttled=0x50005 -> flags. Bit 0 undervoltage now,
+    bit 16 undervoltage has occurred, bit 2 throttled now, bit 18 occurred."""
+    try:
+        v = int(text.strip().split("=")[-1], 16)
+    except ValueError:
+        v = 0
+    return {"undervoltage_now": bool(v & 0x1), "undervoltage_past": bool(v & 0x10000),
+            "throttled_now": bool(v & 0x4), "throttled_past": bool(v & 0x40000)}
+
 
 class BridgeAgent:
     HEARTBEAT_S = 1.0
@@ -233,6 +310,7 @@ class BridgeAgent:
         self.link_stats = link_stats
         self.log = log
         self.token = token
+        self.doctor_kwargs = lambda: {}     # bridge/main injects cfg + pipe state for real checks
         self._task = None
         self._ws = None
         self.connected = False
@@ -331,6 +409,7 @@ class BridgeAgent:
             "bt_pair": lambda: a.bt_pair(str(args.get("mac", ""))),
             "bt_status": a.bt_status,
             "say": lambda: a.say(int(args.get("clip", 0))),
+            "doctor": lambda: a.doctor(**self.doctor_kwargs()) if hasattr(a, "doctor") else None,
         }.get(cmd)
         if handler is None:
             await self._send(ws, "ack", {"cmd_id": cmd_id, "ok": False,
