@@ -10,3 +10,4 @@ sim/data/
 *.npy
 rides/
 .coverage
+demo_out/

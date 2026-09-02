@@ -15,6 +15,13 @@ def test_envelope_roundtrip_and_rejects():
         parse_msg('{"v":9,"t":"vad","from":"x","data":{}}')
 
 
+def test_ladder_rider_ducks_only_music():
+    from base.orc import ladder
+    parts = {"l": "lead", "c": "chase", "r1": "rider", "r2": "rider", "m": "music"}
+    g = ladder.gains_for("rider", parts)
+    assert g["m"] == 25 and g["r2"] == 100 and g["l"] == 100, g
+
+
 def test_orchestrator_hardening():
     r = demo_roster(3)
     o = Orchestrator(r, PyMixer(rtp_port=5460))

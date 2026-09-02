@@ -22,4 +22,7 @@ convoy:           ## run a 6-rider simulated convoy interactively
 base:             ## run the base station (mixer + control WS + dashboard) on a demo roster
 	$(PY) -m base.main
 
-.PHONY: setup fixtures earcons test test-fast convoy base
+demo: fixtures    ## the see-and-hear entry point: 40 s scripted ride, live dashboard, wav outputs
+	$(PY) -m sim.demo
+
+.PHONY: setup fixtures earcons test test-fast convoy base demo

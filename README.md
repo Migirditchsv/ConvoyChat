@@ -26,9 +26,13 @@ to `docs/decisions/`.
 
     sudo apt install libopus0 espeak-ng   # opus runtime + fixture fallback voices
     make setup
-    make test        # Tier-0: S-01 .. S-12 (31 tests)
-    make base        # mixer + control WS :8800 + dashboard http :8080
-    make convoy      # 6 simulated riders against it
+    make demo        # START HERE: 40 s scripted ride on the real stack —
+                     #   live dashboard at http://localhost:8080 (controls work
+                     #   mid-ride), then demo_out/ears/*.wav = what each rider
+                     #   heard, mouths/*.wav = what their mic picked up,
+                     #   timeline.txt = every gate/duck/move/ack
+    make test        # Tier-0: S-01 .. S-12 (32 tests)
+    make base        # base station alone (mixer + control WS + dashboard)
 
 ## Status
 

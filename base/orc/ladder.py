@@ -6,7 +6,9 @@ DEFAULT_GAINS = {"lead": 100, "chase": 100, "rider": 100, "music": 60}
 DUCK = {
     "chase": {"lead": 0, "chase": 100, "rider": 0, "music": 0},
     "lead":  {"lead": 100, "chase": 100, "rider": 25, "music": 8},
-    "rider": None,   # riders don't duck anyone
+    # riders never duck people, but music ducks under ANY speech (the
+    # original requirement: "music fades when they or others speak")
+    "rider": {"lead": 100, "chase": 100, "rider": 100, "music": 25},
     "music": None,
 }
 
