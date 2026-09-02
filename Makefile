@@ -38,7 +38,7 @@ fixtures: _deps   ## generate labeled speech+wind test audio (first run ~30-60 s
 earcons: _deps    ## generate earcon wavs into common/earcons/
 	@$(PY) -m common.earcons
 
-test: fixtures    ## full Tier-0 suite (~70 s, 57 tests; gate metrics dominate)
+test: fixtures    ## full Tier-0 suite (~80 s, 90 tests; gate metrics dominate)
 	@$(PY) -m pytest
 
 test-fast: _deps  ## unit tests only, skips realtime convoy tests (~65 s)

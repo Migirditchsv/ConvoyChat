@@ -87,7 +87,8 @@ function render(){
   $("sim").style.display=snap.mode==="sim"?"flex":"none";
   $("state").textContent=
     `${snap.mode} · talking: ${snap.talking.join(", ")||"—"} · ${snap.speed_kmh|0} km/h · rooms: ${snap.rooms.join("/")}`
-    + ` · tts: ${snap.tts_engine||"?"}${snap.announcing?" ← SPEAKING":""}`;
+    + ` · tts: ${snap.tts_engine||"?"}${snap.announcing?" ← SPEAKING":""}`
+    + (snap.radio?` · radio ${snap.radio.callsign||"(no callsign)"}: ${snap.radio.keyed?"KEYED":snap.radio.rx_busy?"receiving":"idle"} · tx ${snap.radio.tx_s}s · ids ${snap.radio.ids_sent}`:"");
   $("texts").innerHTML=(snap.texts||[]).slice(-5).map(t=>
     `<div>${new Date(t.at*1e3).toTimeString().slice(0,8)} <b style="color:var(--tx)">${esc(t.from)}</b>: ${esc(t.msg)}`
     +`${t.spoken?' <span style="color:var(--sage)">♪ spoken</span>':t.error?` <span style="color:var(--rust)">tts failed: ${esc(t.error)}</span>`:''}</div>`).join("");
@@ -104,6 +105,8 @@ function render(){
       <div class="badges">
         ${snap.talking.includes(id)?'<span class="b talk">talking</span>':''}
         ${n.ptt?'<span class="b ptt">PTT</span>':''}
+        ${n.radio?`<span class="b ${n.radio.active?'ptt':''}">RF ${n.radio.active?(n.radio.keyed?'KEYED':'on'):'idle'} · ${esc(n.radio.callsign||'no callsign')}</span>`:''}
+        ${n.link_up===false?'<span class="b bad">base link DOWN</span>':''}
         ${n.vad_mode&&n.vad_mode!=="silero"?`<span class="b bad">vad:${esc(n.vad_mode)}</span>`:''}
         ${r.muted?'<span class="b mut">MUTED</span>':''}
         ${n.hb_tone?'<span class="b">hb-tone</span>':''}

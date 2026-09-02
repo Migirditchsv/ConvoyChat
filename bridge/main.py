@@ -24,6 +24,9 @@ from bridge.engine import BridgeEngine
 from bridge.io_adapters import CmdSource, CmdSink, ArraySink
 from bridge.net.linkstats import IwLinkStats
 from bridge.net.supervisor import EvictionPolicy
+from bridge.net.failover import LinkFailover, FailoverConfig, Obs, WifiActions
+from bridge.radio import RadioFailover
+from common.radio import RadioLink, make_ptt
 
 log = logging.getLogger("convoy.bridge")
 
@@ -69,6 +72,39 @@ async def run(cfg: cfgmod.BridgeConfig, sim: bool, verbose: bool, roster_path: s
                                 headset_mac=cfg.headset_mac, wifi_iface=cfg.wifi_iface)
     agent = BridgeAgent(cfg.node_id, eng, actions, cfg.base_ws, link_stats=link,
                         log=lambda m: log.info("%s", m), token=cfg.node_token)
+
+    # -- wired HT fallback (DR-011): helmet moves to RF when the base is gone --
+    radio = None
+    if cfg.radio_mode != "off":
+        if sim or not (cfg.radio_rx_cmd and cfg.radio_tx_cmd):
+            from sim.rf import SimRig
+            rig = SimRig(cfg.node_id); rig_rx = rig_tx = rig; ptt = rig
+            log.warning("radio: no rx/tx commands (or --sim): using a loopback SimRig")
+        else:
+            rig_rx = CmdSource(cfg.radio_rx_cmd); rig_tx = CmdSink(cfg.radio_tx_cmd)
+            rig_rx.start(); rig_tx.start()
+            ptt = make_ptt(cfg.radio_ptt)
+        rlink = RadioLink(ptt, cfg.radio_callsign, service=cfg.radio_service,
+                          hang_ms=cfg.radio_hang_ms, tot_s=cfg.radio_tot_s)
+        radio = RadioFailover(rlink, rig_rx, rig_tx, mode=cfg.radio_mode)
+        eng.radio = radio
+        log.info("radio: %s mode, callsign %s (%s), ptt %s", cfg.radio_mode,
+                 cfg.radio_callsign, cfg.radio_service, cfg.radio_ptt)
+
+    # -- hotspot + WireGuard failover (DR-012) --
+    failover = None
+    wifi = None
+    if cfg.failover_enabled:
+        wifi = WifiActions(cfg.wifi_iface, cfg.failover_wg_iface,
+                           enabled=cfg.actions_enabled and not sim, hub_host=cfg.failover_tunnel_base)
+        failover = LinkFailover(wifi, FailoverConfig(
+            star_ssid=cfg.failover_star_ssid, hotspots=cfg.failover_hotspots,
+            star_base=cfg.base_host, tunnel_base=cfg.failover_tunnel_base,
+            fail_s=cfg.failover_fail_s, restore_s=cfg.failover_restore_s),
+            earcon=actions._earcon)
+        log.info("failover: armed, hotspots %s, tunnel base %s%s", cfg.failover_hotspots,
+                 cfg.failover_tunnel_base, "" if wifi.enabled else " (dry-run)")
+
     await eng.start()
     await agent.start()
 
@@ -85,10 +121,27 @@ async def run(cfg: cfgmod.BridgeConfig, sim: bool, verbose: bool, roster_path: s
     tick = 0
     last_restart = 0.0
     RESTART_EVERY_S = 5.0        # a command that dies instantly must not earcon-spam
+    last_rx = eng.stats["rx_pkts"]
+    quiet_s = 0
     while True:
         await asyncio.sleep(1.0)
         tick += 1
         st = link()
+        # base reachable = control connected AND downlink packets still arriving
+        rx = eng.stats["rx_pkts"]
+        quiet_s = 0 if rx > last_rx else quiet_s + 1
+        last_rx = rx
+        base_ok = agent.connected and quiet_s < 3
+        eng.link_up = base_ok                      # RadioFailover(auto) keys only when False
+        if failover is not None:
+            scan = wifi.scan() if wifi.enabled else {}
+            state = failover.tick_1s(Obs(base_ok=base_ok, scan=scan,
+                                         internet_ok=wifi.internet_ok() if wifi.enabled else False,
+                                         tunnel_ok=wifi.tunnel_ok(time.time()) if wifi.enabled else False))
+            if wifi.base and wifi.base != eng.mixer_addr[0]:
+                eng.set_mixer_addr((wifi.base, cfg.mixer_port))
+                agent.set_base_url(f"ws://{wifi.base}:{cfg.control_port}/")
+                log.warning("failover: %s -> base %s", state, wifi.base)
         if not sim:
             evict.tick_1s(link.as_link_stats())
             if tick % 10 == 0 and cfg.headset_mac:
@@ -112,11 +165,17 @@ async def run(cfg: cfgmod.BridgeConfig, sim: bool, verbose: bool, roster_path: s
             last_conn = agent.connected
         if verbose:
             s = eng.stats
+            extra = ""
+            if radio is not None:
+                r = radio.stats()
+                extra += f" rf={'ON' if r['active'] else 'idle'}{'/KEYED' if r['keyed'] else ''} ids={r['ids_sent']}"
+            if failover is not None:
+                extra += f" link={failover.state}"
             print(f"[{time.strftime('%H:%M:%S')}] {cfg.node_id} ctl={'up' if agent.connected else 'down'} "
                   f"vad={s.get('vad_mode')} open={int(bool(s.get('vad_open')))} ptt={int(bool(s.get('ptt')))} "
                   f"tx={s['tx_pkts']} rx={s['rx_pkts']} loss={st.get('rtp_loss')}% "
                   f"rssi={st.get('rssi')} rate={st.get('tx_rate')} vol={eng.down.volume_pct}% "
-                  f"evictions={evict.evictions}", flush=True)
+                  f"evictions={evict.evictions}{extra}", flush=True)
 
 
 def main(argv=None):

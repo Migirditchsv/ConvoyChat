@@ -81,7 +81,9 @@ function render(){
   const r=snap.riders[me], n=snap.nodes[me]||{}, mx=(snap.mixer||{})[me]||{};
   $("who").innerHTML=`${esc(me)}<small>${esc(r.role)}</small> <a href="#" id="chg" style="font-size:12px;color:var(--dim);font-weight:400">change</a>`;
   $("chg").onclick=e=>{e.preventDefault();me=null;try{localStorage.removeItem("convoy.rider");}catch(x){}history.replaceState(null,"","/rider");render();};
-  const nd=$("node");nd.hidden=false;nd.textContent=n.online?`bridge ok · vol ${n.volume??"?"}%`:(n.age_s==null?"bridge never seen":`bridge lost ${n.age_s|0}s`);nd.className="pill "+(n.online?"ok":"bad");
+  const nd=$("node");nd.hidden=false;
+  const rf=n.radio&&n.radio.active?` · RADIO ${n.radio.keyed?"keyed":"on"}`:"";
+  nd.textContent=n.online?`bridge ok · vol ${n.volume??"?"}%${rf}`:(n.age_s==null?"bridge never seen":`bridge lost ${n.age_s|0}s`);nd.className="pill "+(n.online?(rf?"warn":"ok"):"bad");
   const talking=snap.talking.includes(me), ptt=!!n.ptt;
   const [lw,lc]=linkWord(n);
   const hs=n.headset;

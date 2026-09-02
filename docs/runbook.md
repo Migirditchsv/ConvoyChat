@@ -8,6 +8,7 @@ is real at the edges and how loud the logs are.
 | **sim** | mixer, ladder, gates, Opus/RTP, agents, pages, TTS | microphones, radio link, headsets, bridges' IPs | INFO | `make up-sim` |
 | **hw** (hardware test) | everything; real Pis and headsets | nothing | INFO + 5 s status lines, 1 Hz on each bridge | `make up` + `make bridge` |
 | **field** | everything | nothing | WARNING only; systemd restarts | `deploy/*.service` |
+| sim + RF | as sim, plus the radio gateway on a simulated channel with an HT-only rider | the radio | INFO | `python3 -m base.main --mode sim --rf` |
 
 The pages are the same in every mode:
 
@@ -190,6 +191,89 @@ Ride start (laminated version in docs/ride-checklist.md):
 If the base dies mid-ride: bridges keep their last state, earcons announce
 link lost; when the base is back every bridge re-hellos and the mixer learns
 their addresses again — no action on the bikes.
+
+---
+
+## 4. Ham / GMRS radio fallback (DR-011)
+
+Two places, one link discipline (`common/radio.py`): the base puts the room
+on the air through a wired HT; a bike moves its helmet to its own HT when
+the base is gone. The software never keys without a callsign, never keys
+over a busy channel, never exceeds the time-out, and sends a Morse ID at
+the legal interval and at the end of a communication. Licensing is yours.
+
+**Try it with no radio at all:**
+
+    python3 -m base.main --mode sim --rf        # gateway + one HT-only virtual rider on a sim channel
+    # /ops shows a `radio` card (what came in over RF) and a header line with keyed / tx seconds / IDs
+
+**Base gateway (chase car):** an HT on a USB sound card (K1/K2 plug cable:
+speaker out -> line in, mic in <- line out) and PTT on a USB-serial RTS
+line through a transistor. In `roster.yaml`:
+
+    net:
+      radio:
+        callsign: K1ABC            # REQUIRED
+        service: ham               # or gmrs
+        ptt: serial:/dev/ttyUSB0:rts
+        rx_cmd: "arecord -q -D plughw:1,0 -f S16_LE -r 16000 -c 1 -t raw -"
+        tx_cmd: "aplay  -q -D plughw:1,0 -f S16_LE -r 16000 -c 1 -t raw -"
+
+Music never reaches the rig (mixer exclude mask). RF speech enters through
+the same gate as a helmet, so it ducks music and shows as `radio` on /ops.
+Set the HT to the simplex frequency, squelch normal, VOX OFF (we key PTT).
+
+**Bike failover:** HT wired to the Pi through an I2S codec HAT or USB sound
+card (the 3A+ has one USB port: the BT dongle — use the I2S HAT) and PTT on
+a GPIO through an optocoupler. `/boot/convoy.toml`:
+
+    [radio]
+    mode = "auto"                  # RF only while the base is unreachable
+    callsign = "K1ABC"
+    ptt = "gpio:17"
+    rx_cmd = "arecord -q -D plughw:1,0 -f S16_LE -r 16000 -c 1 -t raw -"
+    tx_cmd = "aplay  -q -D plughw:1,0 -f S16_LE -r 16000 -c 1 -t raw -"
+
+`make bridge` then prints `rf=idle` until the base link drops, `rf=ON` /
+`rf=ON/KEYED` after. The rider hears the ptt-off earcon after each ID and
+sees "RADIO on" on the phone page. `mode = "always"` makes a licensed
+rider a permanent relay of the room.
+
+If a bridge's VAD has failed fully open (red `vad:open` on /ops) the RF
+path stays silent unless the rider holds TALK; `tot_s = 60` in the toml is
+a sensible bike-side time-out (the base gateway keeps 180).
+
+Bench check before a ride: `python3 -m bridge.main --sim --config
+/boot/convoy.toml -v` with the rig connected keys the real PTT from the
+fake mouth every 12–40 s; watch the rig's TX light and hear the CW ID.
+
+---
+
+## 5. Hotspot + WireGuard fallback (DR-012)
+
+When the convoy Wi-Fi is gone and a phone has coverage, a bridge joins any
+listed rider hotspot it can see, tunnels to a hub, and re-points itself at
+the base's tunnel address. Riders without a hotspot plan ride on a friend's.
+
+    # once, per device: keys + config from deploy/wg/ (hub = VPS or the tablet)
+    wg genkey | tee r2_rider.key | wg pubkey > r2_rider.pub
+    sudo cp deploy/wg/bike.conf.example /etc/wireguard/convoy.conf && sudo nano /etc/wireguard/convoy.conf
+    # NetworkManager profiles for the star and every hotspot (names = SSIDs):
+    sudo nmcli con add type wifi ifname wlan0 con-name "convoy" ssid "convoy" wifi-sec.key-mgmt wpa-psk wifi-sec.psk '<psk>'
+    sudo nmcli con add type wifi ifname wlan0 con-name "Sam iPhone" ssid "Sam iPhone" wifi-sec.key-mgmt wpa-psk wifi-sec.psk '<psk>' connection.autoconnect no
+
+`/boot/convoy.toml`:
+
+    [failover]
+    enabled = true
+    hotspots = ["Sam iPhone", "Kate Pixel"]
+    tunnel_base = "10.66.0.1"
+
+Everything dry-runs (logs the nmcli/wg commands it would run) until
+`[actions] enabled = true`. `make bridge` prints `link=star|hotspot|tunnel`.
+Timing defaults: leave the star after 8 s of base silence, return after
+12 s of a strong convoy SSID, give each hotspot 25 s to yield a tunnel.
+The base needs nothing new except its own tunnel up (`deploy/wg/base.conf`).
 
 ---
 

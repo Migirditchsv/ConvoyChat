@@ -25,3 +25,22 @@ enabled = false             # true on a real bike: reboot/reconnect shells actua
 
 [net]
 node_token = ""             # if the roster sets net.node_token, must match
+
+[radio]                     # wired HT fallback (DR-011): the helmet moves to RF when the base is gone
+mode = "off"                # off | auto | always ("always" = a licensed rider relaying the room)
+callsign = ""               # REQUIRED to transmit; the link never keys without one
+service = "ham"             # ham (ID every 10 min) | gmrs (every 15 min)
+ptt = "gpio:17"             # gpio:<pin>[:low] | serial:/dev/ttyUSB0:rts | none
+rx_cmd = "arecord -q -D plughw:1,0 -f S16_LE -r 16000 -c 1 -t raw -"   # rig speaker -> Pi
+tx_cmd = "aplay -q -D plughw:1,0 -f S16_LE -r 16000 -c 1 -t raw -"     # Pi -> rig mic
+hang_ms = 600
+tot_s = 180                 # time-out timer (seconds keyed) before a forced unkey
+
+[failover]                  # hotspot + WireGuard when the convoy Wi-Fi is gone (DR-012)
+enabled = false
+star_ssid = "convoy"
+hotspots = ["Sam iPhone", "Kate Pixel"]   # NetworkManager profiles with these names must exist
+tunnel_base = "10.66.0.1"   # the base's address inside the WireGuard tunnel
+wg_iface = "convoy"         # /etc/wireguard/convoy.conf (deploy/wg/bike.conf.example)
+fail_s = 8
+restore_s = 12

@@ -39,7 +39,7 @@ to `docs/decisions/`.
                      #   real speech; the phone page's TALK button drives them.
     make demo        # the 40 s scripted tour instead: writes demo_out/*.wav
     make listen      # play the headline demo recording
-    make test        # Tier-0: S-01 .. S-17 (57 tests, ~70 s)
+    make test        # Tier-0: S-01 .. S-20 (~90 tests, ~90 s)
 
 Three modes, one stack — `docs/runbook.md` is the copy-paste guide:
 
@@ -59,7 +59,8 @@ internet. New to the project? Read `catchup.md`.
 | M0 scaffold + fixtures + chain-in-sim | done — S-01..S-06 green |
 | M1 virtual convoy (mixer/orc/UI/media) | done — S-07..S-12 green (31/31) |
 | M1.1 real-speech fixtures + operator debug plane | done — DR-008/009 |
-| M1.2 LAN-ready: rider phone page, PTT, bridge entry point, three run modes | done — DR-010, S-13..S-17 (57/57) |
+| M1.2 LAN-ready: rider phone page, PTT, bridge entry point, three run modes | done — DR-010, S-13..S-17 |
+| M1.3 fallback layers: ham/GMRS radio gateway + bike RF failover, hotspot + WireGuard | done in software — DR-011/012, S-18..S-20; hardware-in-the-loop pending |
 | M2 Bluetooth masquerade on metal | next — blocked on hardware arrival |
 
 Safety rules SAFE-1..3 (fail-open mic, audible truth, priority never behind
