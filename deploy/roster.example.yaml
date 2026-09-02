@@ -1,0 +1,24 @@
+# ConvoyChat roster — the base station's single source of truth.
+# Copy to roster.yaml next to the repo (gitignored) and edit.
+version: 1
+net:
+  mixer_bind: 0.0.0.0      # RTP bind address (0.0.0.0 = every interface)
+  # node_token: change-me  # optional shared secret bridges must present in hello
+rooms: [main, nav]
+riders:
+  - id: r0_lead            # ids are free text; they become the phone page's names
+    role: lead             # lead | chase | rider | music
+    rooms: [main]
+    headset: {model: "Cardo Packtalk", codec: mSBC}
+  - id: r1_chase
+    role: chase
+  - id: r2_rider
+    role: rider
+  - id: r3_rider
+    role: rider
+  - id: r4_rider
+    role: rider
+  - id: music
+    role: music
+# Bridge IPs are NOT listed: the mixer replies to wherever a bridge's RTP comes
+# from (symmetric RTP), so DHCP is fine. down_port defaults to 6100 + 2*index.

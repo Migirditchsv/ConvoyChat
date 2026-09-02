@@ -19,7 +19,7 @@ entry point.
 
 ## Where the truth lives
 
-1. **Tests are the spec.** 32 Tier-0 tests (S-xx), all green. If you change
+1. **Tests are the spec.** 57 Tier-0 tests (S-xx), all green. If you change
    behavior, change the test in the same commit.
 2. `docs/decisions/DR-001..009` — every deviation from the plan, with
    revisit-conditions. Add a DR when you deviate; the format is in DR-001.
@@ -35,48 +35,64 @@ entry point.
 | M0 scaffold, fixtures, gated audio chain in sim | done |
 | M1 virtual convoy: mixer, orchestrator, dashboard, media | done |
 | M1.1 real-speech fixtures; operator debug plane; `make demo` | done |
+| M1.2 LAN-ready (2026-09-02 review): rider phone page + PTT, bridge entry point, three run modes, transport fixes | done — DR-010, docs/review-2026-09-02.md |
 | **M2 Bluetooth masquerade on real Pi + headsets** | **next — blocked on hardware delivery (~this week)** |
 
-Git: 5 commits on `main`, pushed to `github.com/Migirditchsv/ConvoyChat`.
-CI: `.github/workflows/tier0.yml` runs `make test` on ubuntu-latest.
+Git: 7 commits on `main`, pushed to `github.com/Migirditchsv/ConvoyChat`.
+CI: `.github/workflows/ci.yml` runs `make test` on ubuntu-latest.
 
 ## Run it
 
     make doctor      # preflight with remedies
     make setup       # pip deps (PEP-668-aware; venv fallback printed on refusal)
-    make demo        # THE entry point: 40 s scripted ride on the real stack.
-                     #   Live dashboard: http://localhost:8080 (mute/trim/vol/
-                     #   identify/reboot work mid-ride). Writes demo_out/:
-                     #   ears/*.wav (what each rider heard), mouths/*.wav
-                     #   (what their mic picked up), timeline.txt, README.txt.
+    make up-sim      # THE entry point: whole network on one laptop, forever.
+                     #   Prints LAN URLs. /rider on any phone = the rider's
+                     #   page (hold-to-talk, vol, room, pair headset); /ops =
+                     #   chase dashboard. Six virtual riders (real engines on
+                     #   wind + real speech) chatter on their own.
+    make up          # hardware-test base (verbose); make bridge on each Pi
+    make up-field    # quiet base; deploy/*.service for boot-time
+    make demo        # 40 s scripted ride -> demo_out/ears|mouths/*.wav, timeline
     make listen      # plays the headline recording (ears/r3_rider.wav)
-    make test        # 32 tests, ~90 s (Silero over ~25 min of audio dominates)
-    make base        # base station alone — prints ONE line then serves; not hung
-    make convoy      # raw 6-rider sim, no dashboard/wavs
+    make test        # 57 tests, ~70 s (Silero over ~25 min of audio dominates)
+    make status      # curl /snapshot.json from a running base
 
+`docs/runbook.md` is the copy-paste path for sim / hardware test / field.
 Expectations that have confused people: nothing plays through speakers
-except `make listen` — the demo's product is FILES plus the live dashboard.
+except `make listen` / `--monitor` — the products are pages, acks and FILES.
 All audio is deliberately 16 kHz mono phone-call quality (INV-2): that is
-what a helmet headset receives over HFP.
+what a helmet headset receives over HFP. Six Silero VADs in one process can
+overrun SAFE-1's budget on a slow laptop and demote to energy (red badge on
+/ops) — `--energy-vad` avoids the noise; on a Pi each bridge runs alone.
 
 ## Architecture in one screen
 
     [rider's own headset] --BT HFP/SCO (mono 8/16k)--> [bridge/ on Pi 3A+]
-        bridge/audio: HPF(speed) -> SafeVad -> SpeechGate(pre-roll 900ms)
-                      -> AGC -> Opus(60ms, DTX, FEC) -> RTP
-        bridge/agent: WS control client (heartbeat 1Hz, acked node_cmds)
-        bridge/net:   self-eviction policy (client-side, INV-9)
-    --5GHz Wi-Fi, RTP up to :5100 (SSRC=crc32(node_id)), down :6100+2n-->
-    [base/ on x86 tablet]
+        bridge/main:  entry point; /boot/convoy.toml (bridge/config); CmdSource/
+                      CmdSink = pw-record/pw-play pipes, supervised
+        bridge/audio: HPF(speed) -> SafeVad -> SpeechGate(pre-roll 900ms; PTT
+                      = force_open from the phone) -> AGC -> Opus(60ms, DTX,
+                      FEC) -> RTP; downlink reorder + PLC + earcons after vol
+        bridge/agent: WS control client (hello[+token], heartbeat 1Hz with
+                      link/headset state, VAD open/close -> base, acked
+                      node_cmds incl. ptt/bt_scan/bt_pair/bt_status/say)
+        bridge/net:   iw station-dump link stats -> eviction policy (INV-9)
+    --5GHz Wi-Fi, RTP up to :5100 (SSRC=crc32(node_id)), down :6100+2n
+      (mixer replies to the uplink's source host: no bridge IPs in the roster)-->
+    [base/ on x86 tablet]  base/main --mode sim|hw|field
         base/mixer/pymixer: 60ms tick, per-talker gains, N-1 per listener,
-                            lead-broadcast added once per foreign room, PLC
+                            lead-broadcast added once per foreign room, PLC,
+                            resync after long gaps, wrap-safe seq
         base/orc: ladder + hangover, mute/trim COMPOSING with ladder
                   (effective = muted?0 : ladder*trim/100), node_cmd routing,
-                  snapshots (authoritative; deltas are conveniences)
-        base/ui:  static dashboard, plain HTTP :8080, WS :8800 (no TLS by
-                  design — the page never touches audio, so no getUserMedia)
+                  snapshots PUSHED to pages (debounced + 1 Hz; authoritative)
+        base/ui:  /  landing   /rider phone page   /ops dashboard
+                  /snapshot.json; plain HTTP :8080, WS :8800 (no TLS by
+                  design — pages never touch audio, so no getUserMedia)
         base/media: RtpSource participants (music / TTS / probes)
-    [phone browsers] --Wi-Fi, control only--> dashboard
+        sim/live: virtual riders (real engines+agents on looping mouths) in
+                  the base process for --mode sim
+    [phone browsers] --Wi-Fi, control only--> /rider (each rider) and /ops
 
 Sim = the REAL stack on fake edges: `sim/vheadset` boundary is just
 ArraySource/ArraySink; `sim/impair.py` is an in-process netem (profiles:
@@ -113,7 +129,9 @@ DR-004 vendored ctypes opus binding · DR-005 single uplink port + SSRC id ·
 DR-006 probes are noise BANDS (Opus voice mode mangles pure tones ~10 dB) ·
 DR-007 SAFE-1 sustained-overrun demotion · DR-008 post-band-limit fixture
 calibration + speed-profile gate (see "gate numbers" below) ·
-DR-009 operator debug plane (node_cmd/ack/audio_ctl, compose rules).
+DR-009 operator debug plane (node_cmd/ack/audio_ctl, compose rules) ·
+DR-010 rider phone page via the base, PTT, symmetric RTP, pushed snapshots,
+run modes, bridge entry point.
 
 ## Gate numbers you must not "fix" blindly (DR-008)
 
@@ -133,27 +151,31 @@ is in this repo's history and DR-008.
 1. **B-1 on metal** (the only real feasibility risk): PipeWire
    `bluez5.roles=[hfp_ag]` + mSBC; oFono+phonesim fake call (some headsets
    won't open the mic outside a "call" — three documented categories,
-   undetectable in software); `tools/bridgectl pair` (bluetoothctl
-   NoInputNoOutput agent + trust) and a reconnect supervisor. Qualify EVERY
-   headset model: mic-outside-call? codec (btmon: CVSD/mSBC)? survives 10
-   call cycles + 20 power cycles? ownership vs the rider's phone (H-07)?
-2. Bridge IO adapter for real audio (pw-cat/ALSA subprocess or gst shell
-   around the existing chain — interfaces already match, DR-001).
-3. `DeviceActions.enabled=true` wiring (reboot/reconnect shells are
-   documented in bridge/agent.py; volume/identify/hb already real).
-4. Wire `bridge/net/EvictionPolicy` into a real link-stats provider
-   (`iw dev wlan0 station dump` parse) — policy is unit-tested, unwired.
-5. bridge/svc: golden image build (RPi OS Lite 64, overlayfs RO root,
-   systemd units, watchdog, /boot/convoy.toml) — speced in the plan, unwritten.
+   undetectable in software). Pairing path exists (bt-agent unit +
+   `bt_scan`/`bt_pair` from the rider page, `DeviceActions` shells, dry-run
+   until `[actions] enabled`) but is UNVERIFIED against real bluetoothctl
+   output. Qualify EVERY headset model: mic-outside-call? codec (btmon:
+   CVSD/mSBC)? survives 10 call cycles + 20 power cycles? ownership vs the
+   rider's phone (H-07)?
+2. Real audio IO on the Pi: `CmdSource`/`CmdSink` exist and are tested with
+   fake commands; the pw-record/pw-play `--target` node names for the HFP
+   AG source/sink must be found on the device (runbook §2.2) — put them in
+   the toml. Measure tick busy % (DR-001 revisit: >30 % of a core).
+3. Golden image (RPi OS Lite 64, overlayfs RO root, deploy/*.service,
+   /boot/convoy.toml) — units written, image build procedure not.
+4. Per-command ack timeouts in the orchestrator (DR-009 revisit; pending
+   acks on a dead node currently stay "pending" on the phone).
+5. GPS feed: `on_gps` exists; /ops could post browser Geolocation. Until
+   then `[node] speed_kmh` in the toml sets the HPF corner statically and
+   the ops sim-speed slider drives the self-move rule.
 6. base/media: music from files/playlist (RtpSource plumbing exists; file/
-   playlist source still a stub). TTS is DONE: dashboard text bar -> espeak
-   (or Piper if installed + CONVOY_PIPER_VOICE set) -> announce participant,
-   music ducks to 25 while speaking, S-13 covers it. `make base-live` plays
-   room `main` through the base machine's speakers to hear it standalone.
-7. Real roster.yaml (schema in common/roster.py + plan §03).
-8. Nighthawk R-1 config checklist on the actual unit; record model in
+   playlist source still a stub). TTS is DONE (S-13). `make base-live`.
+7. Nighthawk R-1 config checklist on the actual unit; record model in
    docs/hardware.md. Note stock AX firmware ships OFDMA OFF — enable it.
-9. Re-baseline fixtures from real ride captures when the recorder exists.
+8. Re-baseline fixtures from real ride captures when the recorder exists.
+9. Browser-driven smoke test of /rider (Playwright is a 30-line add; see
+   docs/review-2026-09-02.md O4) and the "substantial improvements" list
+   there (bridge-local rider page, RTCP-lite expected-loss, roster reload).
 
 ## Traps the hardware week will meet (all sourced in the trade study)
 
@@ -171,12 +193,18 @@ is in this repo's history and DR-008.
 ## Repo map
 
     common/    protocol (RTP + control JSON), roster, dsp, opusbind, earcons
-    bridge/    audio chain (vad/gate/chain/engine), agent, net policy, io
-    base/      mixer (api + pymixer), orc (ladder + server), ui, media, main
-    sim/       fixtures (+ext/ real speech & wind drop-ins), impair, convoy, demo
-    tests/     S-01..S-12 + SAFE-1 semantics — `make test`
-    tools/     bridgectl / fieldlog stubs (fill at M2)
-    docs/      decisions/, hardware.md (fill at build), ride-checklist.md
+    bridge/    main + config (Pi entry point), audio chain (vad/gate/chain/
+               engine), agent (Sim/DeviceActions), io (arrays, UDP, Cmd*),
+               net (linkstats + eviction policy)
+    base/      main (--mode), mixer (api + pymixer), orc (ladder + server),
+               ui/static (index/rider/ops), media (participants + tts)
+    sim/       fixtures (+ext/ real speech & wind drop-ins), impair, convoy,
+               demo (40 s tour), live (forever virtual riders)
+    deploy/    roster.example.yaml, convoy.example.toml, systemd units
+    tests/     S-01..S-17 + SAFE-1 semantics — `make test` (57)
+    tools/     bridgectl (stub) / fieldlog (heartbeats -> JSONL)
+    docs/      runbook.md (three modes), review-2026-09-02.md, decisions/,
+               hardware.md, ride-checklist.md
 
 Conventions: trunk-based on main; commit messages explain WHY; every commit
 ends with the session attribution trailer (see git log); sim/data/ and

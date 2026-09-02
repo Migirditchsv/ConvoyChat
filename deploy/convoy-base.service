@@ -1,0 +1,22 @@
+# systemd unit for the chase-car base station (field mode).
+#   sudo cp deploy/convoy-base.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now convoy-base
+# Assumes the repo is at /opt/convoychat and roster.yaml sits beside it.
+[Unit]
+Description=ConvoyChat base station (mixer + control + dashboard)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=convoy
+WorkingDirectory=/opt/convoychat
+ExecStart=/usr/bin/python3 -m base.main --mode field --roster /opt/convoychat/roster.yaml
+Restart=always
+RestartSec=2
+# realtime-ish scheduling for the 60 ms mixer tick
+Nice=-10
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target

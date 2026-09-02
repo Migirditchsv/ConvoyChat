@@ -1,0 +1,13 @@
+# Headless pairing agent so `bluetoothctl pair` works without a keyboard
+# (headsets use a fixed 0000 PIN / just-works). Package: bluez-tools.
+[Unit]
+Description=Bluetooth NoInputNoOutput pairing agent (ConvoyChat)
+After=bluetooth.target
+Requires=bluetooth.target
+
+[Service]
+ExecStart=/usr/bin/bt-agent -c NoInputNoOutput
+Restart=always
+
+[Install]
+WantedBy=multi-user.target

@@ -13,6 +13,10 @@ SPECS = {  # name: list of (freq, ms) — rising = good, falling = bad
     "mixer_unreachable": [(440, 120), (0, 60), (440, 120), (0, 60), (440, 200)],
     "dsp_bypass":      [(1200, 60), (0, 40), (1200, 60)],   # SAFE-1 fired
     "rider_offline":   [(700, 100), (500, 160)],
+    "identify":        [(880, 80), (0, 40), (880, 80), (0, 40), (1320, 160)],  # "this one"
+    "volume":          [(990, 40)],                                    # level changed
+    "ptt_on":          [(660, 40), (880, 60)],                          # gate forced open
+    "ptt_off":         [(880, 40), (660, 60)],                          # back to VAD
 }
 
 

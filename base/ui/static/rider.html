@@ -1,0 +1,133 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes"><meta name="mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#14181a">
+<link rel="manifest" href="/manifest.webmanifest"><link rel="icon" href="/icon.svg">
+<title>convoy rider</title>
+<style>
+:root{--bg:#14181a;--card:#1b2124;--in:#232a2e;--line:#313a3e;--tx:#dce2e2;--dim:#939c9e;--amber:#e0a03c;--sage:#7cbe9b;--rust:#de7a5c;--slate:#8fb3c9}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{height:100%}body{margin:0;background:var(--bg);color:var(--tx);font:18px/1.4 system-ui;overscroll-behavior:none;user-select:none}
+#app{max-width:560px;margin:0 auto;padding:10px 12px 24px;display:flex;flex-direction:column;gap:10px;min-height:100%}
+.bar{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.pill{font-size:13px;padding:3px 10px;border-radius:12px;border:1px solid var(--line);color:var(--dim)}
+.pill.ok{border-color:var(--sage);color:var(--sage)}.pill.bad{border-color:var(--rust);color:var(--rust)}.pill.warn{border-color:var(--amber);color:var(--amber)}
+h1{margin:0;font-size:22px;flex:1}h1 small{color:var(--amber);font-size:12px;text-transform:uppercase;letter-spacing:.08em;margin-left:6px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px 14px}
+.card h2{margin:0 0 8px;font-size:13px;color:var(--dim);text-transform:uppercase;letter-spacing:.06em}
+button{font:inherit;color:var(--tx);background:var(--in);border:1px solid var(--line);border-radius:12px;padding:14px 12px;min-height:56px;cursor:pointer;touch-action:manipulation}
+button:active{border-color:var(--amber)}button.on{border-color:var(--amber);color:var(--amber)}button[disabled]{opacity:.45}
+button.danger{border-color:var(--rust);color:var(--rust)}
+.row{display:grid;grid-auto-flow:column;grid-auto-columns:1fr;gap:8px}
+#ptt{width:100%;min-height:38vh;font-size:30px;font-weight:700;border-radius:20px;border:3px solid var(--line);background:var(--in);touch-action:none}
+#ptt.held{background:#3a2a10;border-color:var(--amber);color:var(--amber)}
+#ptt.tx{background:#173325;border-color:var(--sage);color:var(--sage)}
+#ptt small{display:block;font-size:14px;font-weight:400;color:var(--dim);margin-top:6px}
+.pick{display:grid;gap:8px}.pick button{min-height:64px;font-size:22px;text-align:left;display:flex;align-items:center;gap:10px}
+.dot{width:12px;height:12px;border-radius:6px;background:var(--rust);display:inline-block}.dot.on{background:var(--sage)}
+.feed{font-size:15px;color:var(--dim);max-height:130px;overflow-y:auto}.feed b{color:var(--tx)}
+.feed .spk{color:var(--sage)}
+#toast{position:fixed;left:50%;bottom:18px;transform:translateX(-50%);background:#000c;color:#fff;padding:10px 16px;border-radius:10px;font-size:15px;opacity:0;transition:opacity .2s;pointer-events:none;max-width:90vw}
+#toast.show{opacity:1}
+input[type=text]{font:inherit;flex:1;background:var(--in);border:1px solid var(--line);color:var(--tx);padding:12px;border-radius:12px;min-width:0}
+.hs{display:flex;flex-direction:column;gap:6px}.hs button{text-align:left}
+.kv{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;font-size:13px;color:var(--dim)}.kv b{display:block;color:var(--tx);font-size:16px}
+.muted{color:var(--dim);font-size:14px}
+#link{font-size:13px;color:var(--dim);text-align:center}
+</style></head><body><div id="app">
+<div class="bar"><h1 id="who">convoy</h1><span class="pill bad" id="conn">connecting…</span><span class="pill" id="node">bridge ?</span></div>
+<div id="view"></div>
+<div id="link"><a href="/" style="color:var(--dim)">home</a> · <a href="/ops" style="color:var(--dim)">operator</a> · <span id="modep"></span></div>
+</div>
+<div id="toast"></div>
+<script>
+const $=id=>document.getElementById(id);
+const esc=s=>String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+let snap=null, me=null, held=false, lastAck=null, scan=null, wake=null, view="", pttTimer=null;
+try{me=new URLSearchParams(location.search).get("id")||localStorage.getItem("convoy.rider");}catch(e){}
+let ws; function connect(){
+  ws=new WebSocket(`ws://${location.hostname}:8800/`);
+  ws.onopen=()=>{send("hello",{kind:"ui"});setConn(true);if(!held&&me)cmd("ptt",{on:false});};   // reconnect: never leave a gate forced open
+  ws.onmessage=e=>{const m=JSON.parse(e.data);if(m.t==="snapshot"){snap=m.data;render();}};
+  ws.onclose=()=>{setConn(false);held=false;setTimeout(connect,1500);};
+}
+function setConn(ok){const c=$("conn");c.textContent=ok?"base ok":"no base";c.className="pill "+(ok?"ok":"bad");}
+const send=(t,data)=>{if(ws&&ws.readyState===1)ws.send(JSON.stringify({v:1,t,ts:Date.now()/1e3,from:me||"ui",data}));};
+function cmd(c,args){if(!me)return;send("node_cmd",{target:me,cmd:c,args:args||{}});}
+const setHTML=(el,html)=>{if(el._html!==html){el._html=html;el.innerHTML=html;return true;}return false;};
+function toast(s,ms){const t=$("toast");t.textContent=s;t.classList.add("show");clearTimeout(t._h);t._h=setTimeout(()=>t.classList.remove("show"),ms||1800);}
+function pick(id){me=id;try{localStorage.setItem("convoy.rider",id);}catch(e){}history.replaceState(null,"",`/rider?id=${encodeURIComponent(id)}`);scan=null;render();}
+async function wakeLock(){try{if(!wake&&navigator.wakeLock){wake=await navigator.wakeLock.request("screen");wake.addEventListener("release",()=>wake=null);}}catch(e){}}
+document.addEventListener("visibilitychange",()=>{if(document.hidden&&held){held=false;cmd("ptt",{on:false});}else if(!document.hidden)wakeLock();});
+// PTT: hold = gate forced open (the rider's answer to wind the VAD can't beat)
+// dead-man: the bridge releases PTT 6 s after the last "on"; re-arm every 2 s while held
+function pttDown(ev){ev.preventDefault();if(held)return;held=true;cmd("ptt",{on:true});clearInterval(pttTimer);pttTimer=setInterval(()=>held&&cmd("ptt",{on:true}),2000);wakeLock();render();if(navigator.vibrate)navigator.vibrate(20);}
+function pttUp(ev){if(ev)ev.preventDefault();clearInterval(pttTimer);if(!held)return;held=false;cmd("ptt",{on:false});render();}
+function linkWord(n){if(!n||n.rssi==null)return["?",""];const r=n.rssi,l=n.rtp_loss??0;if(r<-80||l>20)return["bad","bad"];if(r<-70||l>5)return["weak","warn"];return["good","ok"];}
+function render(){
+  if(!snap)return;
+  $("modep").textContent=snap.mode==="sim"?"simulation":snap.mode;
+  const riders=Object.entries(snap.riders).filter(([id,r])=>r.role!=="music");
+  if(!me||!snap.riders[me]){
+    $("who").textContent="who are you?";$("node").hidden=true;
+    const html=`<div class="card"><h2>pick your bike</h2><div class="pick">${riders.map(([id,r])=>{const n=snap.nodes[id]||{};
+      return `<button data-id="${esc(id)}"><span class="dot ${n.online?"on":""}"></span>${esc(id)} <span class="muted">${esc(r.role)}${n.online?"":" · bridge offline"}</span></button>`;}).join("")}</div>
+      <p class="muted">Your choice is remembered on this phone. Tap the wrong one? Use "change" at the top later.</p></div>`;
+    if(view!=="pick"||$("view").dataset.n!=riders.length){$("view").innerHTML=html;view="pick";$("view").dataset.n=riders.length;}
+    $("view").querySelectorAll("button[data-id]").forEach(b=>b.onclick=()=>pick(b.dataset.id));
+    $("view").querySelectorAll("button[data-id]").forEach(b=>{const n=snap.nodes[b.dataset.id]||{};b.querySelector(".dot").className="dot "+(n.online?"on":"");});
+    return;
+  }
+  const r=snap.riders[me], n=snap.nodes[me]||{}, mx=(snap.mixer||{})[me]||{};
+  $("who").innerHTML=`${esc(me)}<small>${esc(r.role)}</small> <a href="#" id="chg" style="font-size:12px;color:var(--dim);font-weight:400">change</a>`;
+  $("chg").onclick=e=>{e.preventDefault();me=null;try{localStorage.removeItem("convoy.rider");}catch(x){}history.replaceState(null,"","/rider");render();};
+  const nd=$("node");nd.hidden=false;nd.textContent=n.online?`bridge ok · vol ${n.volume??"?"}%`:(n.age_s==null?"bridge never seen":`bridge lost ${n.age_s|0}s`);nd.className="pill "+(n.online?"ok":"bad");
+  const talking=snap.talking.includes(me), ptt=!!n.ptt;
+  const [lw,lc]=linkWord(n);
+  const hs=n.headset;
+  const texts=(snap.texts||[]).slice(-5).reverse();
+  if(view!=="main"){
+    $("view").innerHTML=`
+    <button id="ptt"></button>
+    <div class="row"><button id="vdn">vol −</button><button id="vup">vol +</button><button id="ident">find my helmet</button></div>
+    <div class="card"><h2>room <span id="roomnote" class="muted"></span></h2><div class="row" id="rooms"></div></div>
+    <div class="card"><h2>headset</h2><div id="hsbox" class="hs"></div></div>
+    <div class="card"><h2>link</h2><div class="kv" id="kv"></div></div>
+    <div class="card"><h2>messages</h2><div class="feed" id="feed"></div>
+      <div class="bar" style="margin-top:8px"><input type="text" id="txt" placeholder="say it to everyone (spoken)"><button id="sendt">send</button></div></div>
+    <div class="card" id="simcard" hidden><h2>simulation</h2><div class="row"><button id="say">make me say a phrase</button></div>
+      <p class="muted">In sim your "mouth" is a wind recording; this drops a real utterance into it so the gate, mixer and ladder react like a real call.</p></div>`;
+    view="main";
+    const p=$("ptt");p.onpointerdown=pttDown;p.onpointerup=pttUp;p.onpointercancel=pttUp;p.onpointerleave=pttUp;p.oncontextmenu=e=>e.preventDefault();
+    $("vdn").onclick=()=>cmd("adjust_volume",{delta:-10});$("vup").onclick=()=>cmd("adjust_volume",{delta:10});
+    $("ident").onclick=()=>{cmd("identify");toast("playing a tone in your helmet");};
+    $("sendt").onclick=sendText;$("txt").onkeydown=e=>{if(e.key==="Enter")sendText();};
+    $("say").onclick=()=>cmd("say",{clip:Math.floor(Math.random()*5)});
+  }
+  const p=$("ptt");p.className=held?"held":(ptt||talking?"tx":"");
+  p.innerHTML=held?`TRANSMITTING<small>release to stop</small>`:(talking?`ON AIR<small>voice detected — hold to force</small>`:`HOLD TO TALK<small>${n.online?"the gate opens for your voice; hold this when wind wins":"bridge offline — nothing will transmit"}</small>`);
+  p.disabled=!n.online;
+  $("roomnote").textContent=snap.self_move_ok?"":`— stop to change (moving ${snap.speed_kmh|0} km/h)`;
+  if(setHTML($("rooms"),snap.rooms.map(rm=>`<button data-rm="${esc(rm)}" class="${r.room===rm?"on":""}" ${snap.self_move_ok?"":"disabled"}>${esc(rm)}</button>`).join("")))
+    $("rooms").querySelectorAll("button").forEach(b=>b.onclick=()=>{send("move",{pid:me,room:b.dataset.rm,by:"self"});toast(`moving to ${b.dataset.rm}`);});
+  let h=hs?`<div>${hs.connected?'<span class="pill ok">connected</span>':'<span class="pill bad">not connected</span>'} <b>${esc(hs.name||"?")}</b> <span class="muted">${esc(hs.mac||"")}</span></div>`:`<div class="muted">no headset paired yet</div>`;
+  h+=`<div class="row"><button id="btre" ${n.online?"":"disabled"}>reconnect headset</button><button id="btscan" ${n.online?"":"disabled"}>${scan?"scanning…":"scan &amp; pair"}</button></div>`;
+  if(scan&&scan.list)h+=scan.list.length?scan.list.map(x=>`<button data-mac="${esc(x.mac)}">${esc(x.name)} <span class="muted">${esc(x.mac)}${x.paired?" · paired":""}</span></button>`).join(""):`<div class="muted">nothing found — put the headset in pairing mode (hold its phone button until it flashes red/blue) and scan again</div>`;
+  if(setHTML($("hsbox"),h)){
+    $("btre").onclick=()=>{cmd("reconnect_bt");toast("reconnecting headset…");};
+    $("btscan").onclick=()=>{scan={list:null,at:Date.now()};cmd("bt_scan");toast("scanning 8 s — headset in pairing mode?");render();};
+    $("hsbox").querySelectorAll("button[data-mac]").forEach(b=>b.onclick=()=>{cmd("bt_pair",{mac:b.dataset.mac});toast("pairing…");});
+  }
+  setHTML($("kv"),`<div>link<b class="${lc}">${lw}</b></div><div>signal<b>${n.rssi??"—"} dBm</b></div><div>loss<b>${n.rtp_loss??"—"}%</b></div><div>rate<b>${n.tx_rate??"—"} Mb</b></div><div>concealed<b>${mx.plc??0}</b></div><div>vad<b>${esc(n.vad_mode||"?")}</b></div>`);
+  setHTML($("feed"),texts.map(t=>`<div>${new Date(t.at*1e3).toTimeString().slice(0,5)} <b>${esc(t.from)}</b>: ${esc(t.msg)}${t.spoken?' <span class="spk">♪</span>':""}</div>`).join("")||`<div class="muted">nothing yet</div>`);
+  $("simcard").hidden=snap.mode!=="sim";
+  const a=n.last_ack; if(a&&lastAck===null)lastAck=a.at;   // acks from before this page opened are history, not news
+  if(a&&a.at!==lastAck){lastAck=a.at;
+    if(a.cmd==="bt_scan"&&a.ok){scan={list:(a.detail&&a.detail.headsets)||[],at:Date.now()};render();return;}
+    if(a.ok===false){toast("✕ "+(typeof a.detail==="string"?a.detail:JSON.stringify(a.detail)),3000);if(navigator.vibrate)navigator.vibrate([60,40,60]);}
+    else if(a.ok&&a.cmd!=="ptt"){toast("✓ "+(typeof a.detail==="string"?a.detail:a.detail&&a.detail.headset?`headset: ${a.detail.headset.name}`:"ok"));}
+  }
+}
+function sendText(){const el=$("txt");const v=el.value.trim();if(!v)return;send("text",{msg:v,speak:true});el.value="";toast("sent");}
+connect();
+</script></body></html>

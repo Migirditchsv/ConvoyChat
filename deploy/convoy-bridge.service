@@ -1,0 +1,23 @@
+# systemd unit for a Pi bridge (field mode). Identity in /boot/convoy.toml.
+#   sudo cp deploy/convoy-bridge.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now convoy-bridge
+[Unit]
+Description=ConvoyChat bridge (headset <-> Wi-Fi)
+After=network-online.target bluetooth.target pipewire.service
+Wants=network-online.target bluetooth.target
+
+[Service]
+Type=simple
+User=convoy
+WorkingDirectory=/opt/convoychat
+ExecStart=/usr/bin/python3 -m bridge.main --config /boot/convoy.toml --quiet
+Restart=always
+RestartSec=2
+# SCO/mSBC has no kernel buffering: keep the audio loop ahead of everything
+Nice=-15
+CPUSchedulingPolicy=fifo
+CPUSchedulingPriority=30
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target

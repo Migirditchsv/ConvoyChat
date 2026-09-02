@@ -1,0 +1,3 @@
+{"name":"ConvoyChat","short_name":"convoy","start_url":"/rider","display":"standalone",
+ "background_color":"#14181a","theme_color":"#14181a","orientation":"portrait",
+ "icons":[{"src":"/icon.svg","sizes":"any","type":"image/svg+xml"}]}
