@@ -33,6 +33,8 @@ to `docs/decisions/`.
                      #   heard, mouths/*.wav = what their mic picked up,
                      #   timeline.txt = every gate/duck/move/ack
     make listen      # play the headline demo recording
+    make base-live   # base + YOUR speakers in room `main`: open the dashboard,
+                     #   type in the text bar, press send — you hear the TTS
     make test        # Tier-0: S-01 .. S-12 (32 tests, ~90 s)
     make base        # base station alone — prints one line, then serves (Ctrl-C)
 

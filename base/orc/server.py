@@ -24,6 +24,9 @@ class Orchestrator:
         self.talking: set[str] = set()
         self.group_speed_kmh = 0.0
         self.hb_tone_default = False
+        self.texts: list[dict] = []          # recent text/TTS messages (ring)
+        self.announce = None                 # QueuedRtpSource, attached by base.main
+        self._announcing = False
         # operator audio controls, composed with the ladder (never clobbered
         # by duck/restore): effective = 0 if muted else ladder * trim / 100
         self.trim: dict[str, int] = {}
@@ -51,6 +54,8 @@ class Orchestrator:
         if pid in self.muted:
             return 0
         base = self._ladder_now.get(pid, 100)
+        if self._announcing and self.roster.riders[pid].role == "music":
+            base = min(base, 25)             # music ducks under announcements
         return base * self.trim.get(pid, 100) // 100
 
     def _push_gains(self) -> None:
@@ -138,6 +143,33 @@ class Orchestrator:
         self._event("audio_ctl", {"pid": pid, "mute": mute, "trim": trim})
         return True
 
+    # -- text / TTS announcements --
+    def attach_announce(self, announce) -> None:
+        """Wire the QueuedRtpSource; its on_state must call set_announcing."""
+        self.announce = announce
+
+    def set_announcing(self, active: bool) -> None:
+        self._announcing = active
+        self._push_gains()
+
+    async def on_text(self, frm: str, msg: str, speak: bool = False) -> None:
+        msg = (msg or "").strip()[:300]
+        if not msg:
+            return
+        entry = {"at": time.time(), "from": frm, "msg": msg, "speak": bool(speak),
+                 "spoken": False}
+        self.texts = (self.texts + [entry])[-12:]
+        self._event("text", {"from": frm, "msg": msg, "speak": speak})
+        if speak and self.announce is not None:
+            try:
+                from base.media import tts
+                pcm = await tts.render(msg)
+                self.announce.enqueue(pcm)
+                entry["spoken"] = True
+                entry["engine"] = tts.engine_name()
+            except Exception as e:
+                entry["error"] = str(e)[:120]
+
     # -- remote node debug --
     async def send_node_cmd(self, target: str, cmd: str, args: dict | None = None) -> str:
         """Route a debug command to a connected node. Returns cmd_id; the ack
@@ -177,6 +209,9 @@ class Orchestrator:
                 "talking": sorted(self.talking),
                 "speed_kmh": self.group_speed_kmh,
                 "hb_tone_default": self.hb_tone_default,
+                "texts": self.texts,
+                "tts_engine": __import__("base.media.tts", fromlist=["x"]).engine_name(),
+                "announcing": self._announcing,
                 "nodes": nodes,
                 "mixer": self.mixer.stats()}
 
@@ -209,6 +244,9 @@ class Orchestrator:
                         self.on_lead_transfer(d.get("lead", ""))
                     elif t == "gps":
                         self.on_gps(float(d.get("kmh", 0)))
+                    elif t == "text":
+                        await self.on_text(frm, d.get("msg", ""),
+                                           bool(d.get("speak")))
                     elif t == "audio_ctl":
                         self.on_audio_ctl(d.get("pid", ""), d.get("mute"),
                                           d.get("trim"))

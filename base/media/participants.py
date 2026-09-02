@@ -4,6 +4,7 @@ audio cable' is a socket (INV-6 commentary)."""
 from __future__ import annotations
 import asyncio
 import numpy as np
+import asyncio
 
 from common.audio import FRAME, FRAME_MS, RTP_TS_STEP, read_wav, resample_to
 from common.dsp import tone, noise_band
@@ -60,6 +61,59 @@ class RtpSource:
             self.udp.send(pkt, self.mixer_addr)
             next_t += FRAME_MS / 1000
             await asyncio.sleep(max(0.0, next_t - loop.time()))
+
+    def stop(self):
+        if self._task:
+            self._task.cancel()
+        self.udp.close()
+
+
+class QueuedRtpSource:
+    """Announcement participant: silent (sends nothing — absence mixes as
+    silence) until PCM is enqueued, then streams it and goes quiet again.
+    on_state(True/False) brackets each playback for duck control."""
+    def __init__(self, pid: str, mixer_addr=("127.0.0.1", MIXER_RTP_PORT),
+                 on_state=lambda active: None):
+        self.pid = pid
+        self.mixer_addr = mixer_addr
+        self.on_state = on_state
+        self.enc = Encoder(dtx=False)
+        self.ssrc = ssrc_of(pid)
+        self.udp = UdpPort()
+        self._q: asyncio.Queue[np.ndarray] = asyncio.Queue()
+        self._task = None
+        self._seq = self._ts = 0
+        self.playing = False
+
+    async def start(self):
+        await self.udp.bind()
+        self._task = asyncio.create_task(self._run())
+
+    def enqueue(self, pcm: np.ndarray) -> float:
+        """Queue PCM for playback; returns its duration in seconds."""
+        self._q.put_nowait(np.asarray(pcm, dtype=np.int16))
+        return len(pcm) / 16000
+
+    async def _run(self):
+        loop = asyncio.get_running_loop()
+        while True:
+            pcm = await self._q.get()
+            self.playing = True
+            self.on_state(True)
+            next_t = loop.time()
+            for i in range(0, len(pcm), FRAME):
+                frame = pcm[i:i + FRAME]
+                if len(frame) < FRAME:
+                    frame = np.pad(frame, (0, FRAME - len(frame)))
+                pkt = rtp_pack(self._seq, self._ts, self.ssrc, self.enc.encode(frame))
+                self._seq = (self._seq + 1) & 0xFFFF
+                self._ts = (self._ts + RTP_TS_STEP) & 0xFFFFFFFF
+                self.udp.send(pkt, self.mixer_addr)
+                next_t += FRAME_MS / 1000
+                await asyncio.sleep(max(0.0, next_t - loop.time()))
+            self.playing = False
+            if self._q.empty():
+                self.on_state(False)
 
     def stop(self):
         if self._task:

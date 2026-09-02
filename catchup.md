@@ -145,8 +145,11 @@ is in this repo's history and DR-008.
    (`iw dev wlan0 station dump` parse) — policy is unit-tested, unwired.
 5. bridge/svc: golden image build (RPi OS Lite 64, overlayfs RO root,
    systemd units, watchdog, /boot/convoy.toml) — speced in the plan, unwritten.
-6. base/media: music from files/playlist + Piper TTS ("text -> spoken
-   announcement") — RtpSource plumbing exists, sources are stubs.
+6. base/media: music from files/playlist (RtpSource plumbing exists; file/
+   playlist source still a stub). TTS is DONE: dashboard text bar -> espeak
+   (or Piper if installed + CONVOY_PIPER_VOICE set) -> announce participant,
+   music ducks to 25 while speaking, S-13 covers it. `make base-live` plays
+   room `main` through the base machine's speakers to hear it standalone.
 7. Real roster.yaml (schema in common/roster.py + plan §03).
 8. Nighthawk R-1 config checklist on the actual unit; record model in
    docs/hardware.md. Note stock AX firmware ships OFDMA OFF — enable it.

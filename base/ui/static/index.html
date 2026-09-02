@@ -44,17 +44,25 @@ button.danger{border-color:var(--rust);color:var(--rust)}
 border:1px solid var(--line);border-radius:8px;padding:8px 12px;max-height:110px;overflow-y:auto}
 </style></head><body>
 <header>
-  <h1>convoy</h1><span id="state">connecting…</span>
+  <h1>convoy</h1><span id="conn" style="font-size:11px;padding:2px 8px;border-radius:9px;border:1px solid var(--rust);color:var(--rust)">connecting…</span><span id="state"></span>
   <label class="tgl"><input type="checkbox" id="hbt" onchange="hbToggle(this.checked)">heartbeat tone (all)</label>
 </header>
 <main id="grid"></main>
+<div style="padding:0 12px 14px;display:grid;gap:8px">
+  <div id="textbar"><input id="txt" placeholder="type here, press send — it is SPOKEN into room `main` (TTS)"
+    onkeydown="if(event.key==='Enter')sendText()">
+    <label class="tgl" style="align-self:center"><input type="checkbox" id="spk" checked>speak</label>
+    <button onclick="sendText()">send</button></div>
+  <div id="texts" style="font:12px/1.7 ui-monospace,monospace;color:var(--dim)"></div>
+  <div id="log" style="max-height:110px;overflow-y:auto;font:11px/1.6 ui-monospace,monospace;color:var(--dim);background:var(--card);border:1px solid var(--line);border-radius:8px;padding:8px 12px">— command log —</div>
+</div>
 <script>
 let snap=null, log=[];
 const ws=new WebSocket(`ws://${location.hostname}:8800/`);
 const send=(t,data)=>ws.readyState===1&&ws.send(JSON.stringify({v:1,t,ts:Date.now()/1e3,from:"ui",data}));
-ws.onopen=()=>send("hello",{kind:"ui"});
+ws.onopen=()=>{send("hello",{kind:"ui"});const c=document.getElementById("conn");c.textContent="base connected";c.style.borderColor="var(--sage)";c.style.color="var(--sage)";};
 ws.onmessage=e=>{const m=JSON.parse(e.data); if(m.t==="snapshot"){snap=m.data;render();}};
-ws.onclose=()=>{document.getElementById("state").textContent="✕ disconnected from base";};
+ws.onclose=()=>{const c=document.getElementById("conn");c.textContent="✕ base gone — is `make base` (or the demo) still running?";c.style.borderColor="var(--rust)";c.style.color="var(--rust)";};
 setInterval(()=>send("hello",{}),2000);
 function addlog(s){log.unshift(new Date().toTimeString().slice(0,8)+"  "+s); log=log.slice(0,40);}
 function cmd(target,c,args){send("node_cmd",{target,cmd:c,args:args||{}}); addlog(`→ ${target}: ${c} ${JSON.stringify(args||{})}`); setTimeout(()=>send("hello",{}),400);}
@@ -63,10 +71,21 @@ function hbToggle(on){for(const id of Object.keys(snap?.riders||{})) if(id!=="mu
 function reboot(id){if(confirm(`Reboot ${id}'s bridge? Their audio drops ~45 s.`)) cmd(id,"reboot");}
 function meter(l,v,u,warn,bad,inv){const c=v==null?"":(inv?(v<bad?"bad":v<warn?"warn":""):(v>bad?"bad":v>warn?"warn":""));
   return `<div class="${c}">${l}<b>${v==null?"—":v}${u||""}</b></div>`;}
+function sendText(){
+  const el=document.getElementById("txt");
+  if(!el.value.trim())return;
+  send("text",{msg:el.value,speak:document.getElementById("spk").checked});
+  addlog("text: "+el.value); el.value="";
+  setTimeout(()=>send("hello",{}),400);
+}
 function render(){
   const g=document.getElementById("grid"); if(!snap) return;
   document.getElementById("state").textContent=
-    `talking: ${snap.talking.join(", ")||"—"} · ${snap.speed_kmh|0} km/h · rooms: ${snap.rooms.join("/")}`;
+    `talking: ${snap.talking.join(", ")||"—"} · ${snap.speed_kmh|0} km/h · rooms: ${snap.rooms.join("/")}`
+    + ` · tts: ${snap.tts_engine||"?"}${snap.announcing?" ← SPEAKING":""}`;
+  document.getElementById("texts").innerHTML=(snap.texts||[]).slice(-5).map(t=>
+    `<div>${new Date(t.at*1e3).toTimeString().slice(0,8)} <b style="color:var(--tx)">${t.from}</b>: ${t.msg}`
+    +`${t.spoken?' <span style="color:var(--sage)">♪ spoken</span>':t.error?` <span style="color:var(--rust)">tts failed: ${t.error}</span>`:''}</div>`).join("");
   g.innerHTML="";
   for(const [id,r] of Object.entries(snap.riders)){
     if(r.role==="music"){continue;}
@@ -108,11 +127,6 @@ function render(){
       </div>`;
     g.appendChild(el);
   }
-  const tb=document.createElement("div"); tb.id="textbar";
-  tb.innerHTML=`<input id="txt" placeholder="broadcast text… (spoken via TTS)">
-    <button onclick='send("text",{msg:document.getElementById("txt").value,speak:true});addlog("text sent")'>send</button>`;
-  g.appendChild(tb);
-  const lg=document.createElement("div"); lg.id="log"; lg.textContent=log.join("\n")||"— command log —";
-  g.appendChild(lg);
+  document.getElementById("log").textContent=log.join("\n")||"— command log —";
 }
 </script></body></html>

@@ -28,7 +28,7 @@ from common.roster import demo_roster
 from base.main import _serve_static, UI_PORT
 from base.mixer.pymixer import PyMixer
 from base.orc.server import Orchestrator
-from base.media.participants import RtpSource
+from base.media.participants import RtpSource, QueuedRtpSource
 from bridge.agent import BridgeAgent, SimActions
 from bridge.engine import BridgeEngine
 from bridge.io_adapters import ArraySource, ArraySink
@@ -101,7 +101,12 @@ async def main():
     flap_down.p = dict(flap_down.p, blackout=(4.0, 18.0))  # audible mid-ride, 3x
 
     orc = Orchestrator(roster, mixer)
+    announce = QueuedRtpSource("announce", mixer_addr=("127.0.0.1", RTP_PORT),
+                               on_state=orc.set_announcing)
+    mixer.add_participant("announce", "main", None, gain=100, role="rider")
+    orc.attach_announce(announce)
     await mixer.start()
+    await announce.start()
     ws_server = await orc.serve("0.0.0.0", CONTROL_PORT)
     http = await _serve_static()
     orc.on_gps(90.0)
@@ -170,6 +175,8 @@ async def main():
         await asyncio.sleep(0.5)
         ack = orc.acks.get(cid, {})
         note(f"remote debug: vol +20 on r3_rider -> ack ok={ack.get('ok')} ({ack.get('detail')})")
+        await orc.on_text("chase-ui", "fuel stop in ten miles", speak=True)
+        note("TTS: typed text spoken into room `main` — music ducks under it")
 
     async def mover():
         await asyncio.sleep(max(0.0, MOVE_AT - (time.monotonic() - t0)))
@@ -183,7 +190,7 @@ async def main():
     d.cancel(); mv.cancel()
     note("ride ends")
 
-    music.stop()
+    music.stop(); announce.stop()
     for ag in agents.values(): ag.stop()
     for b in bridges.values(): b.stop()
     for p in proxies: p.stop()
@@ -206,8 +213,9 @@ ears/r3_rider.wav   THE ONE TO PLAY FIRST. Music ducks under each speaker,
                     out — and at ~31 s the LEAD's broadcast still reaches
                     them. Rooms + priority + heard-once, audible in one file.
 ears/r2_rider.wav   Same ride from `main`, plus the soft 880 Hz alive-tick
-                    every 5 s (heartbeat tone), and vol/ident earcons if you
-                    clicked the dashboard.
+                    every 5 s (heartbeat tone), the typed TTS announcement
+                    ("fuel stop in ten miles") at ~36 s, and vol/ident
+                    earcons if you clicked the dashboard.
 ears/r4_rider.wav   The straggler: their downlink flaps 5 s per minute —
                     hear concealment then dropout then recovery.
 mouths/r2_rider.wav What r2's mic actually picked up: 90 km/h wind bed with

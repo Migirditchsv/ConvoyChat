@@ -59,8 +59,12 @@ base: _deps       ## run the base station alone (prints one line, then serves un
 	@echo ">> base station starting — this command stays running (Ctrl-C to stop)."
 	@$(PY) -m base.main
 
+base-live: _deps  ## base station + this machine's speakers join room `main` (hear TTS/music live)
+	@echo ">> base station + speaker monitor — type in the dashboard text bar to hear TTS."
+	@$(PY) -m base.main --monitor
+
 convoy: fixtures  ## 6 simulated riders, raw (no dashboard, no wav output)
 	@$(PY) -m sim.convoy --riders 6 --profile parkinglot
 
-.PHONY: help doctor setup _deps fixtures earcons test test-fast demo listen base convoy
+.PHONY: help doctor setup _deps fixtures earcons test test-fast demo listen base base-live convoy
 .DEFAULT_GOAL := help
