@@ -17,7 +17,6 @@ RestartSec=2
 Nice=-15
 CPUSchedulingPolicy=fifo
 CPUSchedulingPriority=30
-WatchdogSec=0
 Environment=PYTHONUNBUFFERED=1
 
 [Install]

@@ -7,6 +7,7 @@ the mixer runs, so concealed frames / pulled frames over the last window is
 the loss the rider actually hears. Pure functions are unit-tested on a
 captured dump (S-16); the subprocess wrapper is a thin shell."""
 from __future__ import annotations
+import asyncio
 import re
 import shutil
 import subprocess
@@ -52,6 +53,8 @@ class IwLinkStats:
         self.engine = engine
         self.runner = runner or self._run_iw
         self.last: dict = {}
+        self._radio: dict = {}
+        self._pending = None
 
     def _run_iw(self) -> str:
         if not shutil.which("iw"):
@@ -62,10 +65,24 @@ class IwLinkStats:
         except (subprocess.SubprocessError, OSError):
             return ""
 
+    def _refresh_radio(self) -> dict:
+        self._radio = parse_station_dump(self.runner())
+        return self._radio
+
     def __call__(self) -> dict:
-        d = parse_station_dump(self.runner())
-        loss = self.engine.downlink_loss_pct() if self.engine is not None else None
-        d["rtp_loss"] = loss
+        """Inside a running loop the `iw` subprocess runs in a worker thread
+        (never blocking the 60 ms audio tick behind a hung `iw`); the call
+        returns the previous reading. Outside a loop it is synchronous."""
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+        if loop is None:
+            self._refresh_radio()
+        elif self._pending is None or self._pending.done():
+            self._pending = loop.run_in_executor(None, self._refresh_radio)
+        d = dict(self._radio) if self._radio else parse_station_dump("")
+        d["rtp_loss"] = self.engine.downlink_loss_pct() if self.engine is not None else None
         self.last = d
         return d
 

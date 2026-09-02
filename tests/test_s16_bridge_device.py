@@ -67,8 +67,8 @@ def test_engine_downlink_loss_window():
             eng.down.push_rtp(pkt(s))
         eng.down.pull()
     # 0-3 decoded, 4-5 concealed once 6 arrives, 6-7 decoded, 8-9 still queued
-    assert eng.downlink_loss_pct() == 25.0
-    assert eng.downlink_loss_pct() is None      # window reset
+    assert eng.downlink_loss_pct(min_interval_s=0) == 25.0
+    assert eng.downlink_loss_pct(min_interval_s=0) is None      # window reset
 
 
 def test_config_defaults_and_env(tmp_path, monkeypatch):
@@ -175,4 +175,74 @@ def test_sim_actions_headset_flow_and_earcons():
         eng.set_volume(10)
         out = np.concatenate([eng.down.pull() for _ in range(n)])
         assert np.abs(out.astype(np.int32)).max() > 1000
+    asyncio.run(scenario())
+
+
+def test_ptt_is_a_dead_man_switch():
+    """PTT armed once and never refreshed releases itself after the hold
+    window (with the ptt-off earcon); a refresh extends it; explicit off is
+    immediate. A dropped control link can't leave a gate forced open."""
+    async def scenario():
+        sink = ArraySink()
+        eng = BridgeEngine("t", ArraySource(60, []), sink, prefer_silero=False)
+        eng.set_ptt(True, hold_s=0.6)                       # 10 frames
+        assert eng.up.gate.force_open and eng.stats["ptt"]
+        await eng.start()
+        await asyncio.sleep(0.4)
+        assert eng.up.gate.force_open                       # still inside the window
+        eng.set_ptt(True, hold_s=0.6)                       # thumb still down: refreshed
+        await asyncio.sleep(0.45)
+        assert eng.up.gate.force_open, "refresh did not extend the hold"
+        await asyncio.sleep(0.5)
+        assert not eng.up.gate.force_open and not eng.stats["ptt"]
+        assert eng.stats["ptt_autorelease"] == 1
+        eng.set_ptt(True); eng.set_ptt(False)
+        assert not eng.up.gate.force_open and eng.stats["ptt_autorelease"] == 1
+        await eng.wait(); eng.stop()
+        assert np.abs(sink.audio().astype(np.int32)).max() > 1000   # earcon audible
+    asyncio.run(scenario())
+
+
+def test_loss_window_shared_between_callers():
+    """Heartbeat and eviction tick both ask within a second: same answer."""
+    from tests.test_s14_transport_lan import _talker
+    eng = BridgeEngine("t", ArraySource(1, []), ArraySink(), prefer_silero=False)
+    pkt = _talker("x")
+    for s in range(10):
+        if s not in (4, 5):
+            eng.down.push_rtp(pkt(s))
+        eng.down.pull()
+    a = eng.downlink_loss_pct(min_interval_s=0)
+    b = eng.downlink_loss_pct()                          # within the interval: cached
+    assert a == b == 25.0
+    assert eng.downlink_loss_pct(min_interval_s=0) is None
+
+
+def test_linkstats_never_blocks_the_loop():
+    """Inside a running loop the iw runner executes off-thread: a 0.3 s
+    runner must not stall the caller, and the reading lands afterwards."""
+    import time
+    def slow():
+        time.sleep(0.3)
+        return IW_DUMP
+    link = IwLinkStats("wlan0", runner=slow)
+
+    async def scenario():
+        t0 = time.monotonic()
+        first = link()
+        assert time.monotonic() - t0 < 0.1 and first["rssi"] is None
+        await asyncio.sleep(0.5)
+        assert link()["rssi"] == -57
+    asyncio.run(scenario())
+    assert IwLinkStats("wlan0", runner=lambda: IW_DUMP)()["tx_rate"] == 173.3   # sync outside a loop
+
+
+def test_device_reboot_when_enabled_runs_shell_without_awaiting():
+    async def scenario():
+        a = DeviceActions(engine=None, enabled=True)
+        a.cmds = lambda: {"reboot": "sleep 5"}          # would hang if awaited
+        import time
+        t0 = time.monotonic()
+        assert await a.reboot() == "rebooting"
+        assert time.monotonic() - t0 < 1.0
     asyncio.run(scenario())

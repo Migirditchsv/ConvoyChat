@@ -83,6 +83,8 @@ async def run(cfg: cfgmod.BridgeConfig, sim: bool, verbose: bool, roster_path: s
     last_alive = (True, True)
     last_conn = None
     tick = 0
+    last_restart = 0.0
+    RESTART_EVERY_S = 5.0        # a command that dies instantly must not earcon-spam
     while True:
         await asyncio.sleep(1.0)
         tick += 1
@@ -99,10 +101,12 @@ async def run(cfg: cfgmod.BridgeConfig, sim: bool, verbose: bool, roster_path: s
                 log.warning("audio pipe state: mic %s, ear %s",
                             "up" if alive[0] else "DOWN", "up" if alive[1] else "DOWN")
                 last_alive = alive
-            if not source.alive:
-                actions._earcon("link_lost"); source.start(); actions._earcon("connected")
-            if not sink.alive:
-                sink.start()
+            if (not source.alive or not sink.alive) and time.monotonic() - last_restart >= RESTART_EVERY_S:
+                last_restart = time.monotonic()
+                if not source.alive:
+                    actions._earcon("link_lost"); source.start(); actions._earcon("connected")
+                if not sink.alive:
+                    sink.start()
         if agent.connected != last_conn:
             log.info("control link %s", "up" if agent.connected else "DOWN")
             last_conn = agent.connected

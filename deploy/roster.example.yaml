@@ -2,7 +2,7 @@
 # Copy to roster.yaml next to the repo (gitignored) and edit.
 version: 1
 net:
-  mixer_ip: 0.0.0.0        # bind address for RTP (0.0.0.0 = every interface)
+  mixer_bind: 0.0.0.0      # RTP bind address (0.0.0.0 = every interface)
   # node_token: change-me  # optional shared secret bridges must present in hello
 rooms: [main, nav]
 riders:

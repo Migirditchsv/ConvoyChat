@@ -104,6 +104,7 @@ Image: Raspberry Pi OS Lite 64-bit (Bookworm). Then:
                      pipewire pipewire-audio wireplumber bluez bluez-tools iw
     sudo useradd -m convoy && sudo usermod -aG bluetooth,audio convoy
     sudo git clone https://github.com/Migirditchsv/ConvoyChat /opt/convoychat
+    sudo chown -R convoy:convoy /opt/convoychat
     cd /opt/convoychat && sudo -u convoy pip install --break-system-packages -e .[vad]
     sudo cp deploy/convoy.example.toml /boot/convoy.toml
     sudo nano /boot/convoy.toml        # [node] id = this bike's roster id, base = chase-car IP
@@ -142,7 +143,10 @@ the self-eviction policy cycled Wi-Fi (INV-9).
 
 What the rider sees on the phone page: bridge ok/lost, headset connected
 or not (refreshed every 10 s from bluetoothctl), link word (good/weak/bad),
-and every command's ack as a toast. `[actions] enabled = true` in the toml
+and every command's ack as a toast. PTT is a dead-man switch: the page
+re-arms it every 2 s while held and the bridge releases it by itself 6 s
+after the last arm (with the ptt-off earcon), so a dropped control link
+never leaves a gate forced open. `[actions] enabled = true` in the toml
 makes reboot/reconnect/pair real; until then every such command acks with
 `DRY-RUN: <shell>` so you can read what it would do.
 

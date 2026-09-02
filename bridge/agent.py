@@ -167,7 +167,11 @@ class DeviceActions(SimActions):
 
     async def reboot(self):
         self._earcon("link_lost")
-        return await self._sh("reboot") if not self.enabled else "rebooting"
+        if not self.enabled:
+            return await self._sh("reboot")
+        # fire and forget: the shell reboots the box, so never await its exit
+        await asyncio.create_subprocess_shell(self.cmds()["reboot"])
+        return "rebooting"
 
     async def reconnect_bt(self):
         out = await self._sh("reconnect_bt")

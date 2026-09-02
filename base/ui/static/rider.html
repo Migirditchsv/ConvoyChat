@@ -43,24 +43,26 @@ input[type=text]{font:inherit;flex:1;background:var(--in);border:1px solid var(-
 <script>
 const $=id=>document.getElementById(id);
 const esc=s=>String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
-let snap=null, me=null, held=false, lastAck=null, scan=null, wake=null, view="";
+let snap=null, me=null, held=false, lastAck=null, scan=null, wake=null, view="", pttTimer=null;
 try{me=new URLSearchParams(location.search).get("id")||localStorage.getItem("convoy.rider");}catch(e){}
 let ws; function connect(){
   ws=new WebSocket(`ws://${location.hostname}:8800/`);
-  ws.onopen=()=>{send("hello",{kind:"ui"});setConn(true);};
+  ws.onopen=()=>{send("hello",{kind:"ui"});setConn(true);if(!held&&me)cmd("ptt",{on:false});};   // reconnect: never leave a gate forced open
   ws.onmessage=e=>{const m=JSON.parse(e.data);if(m.t==="snapshot"){snap=m.data;render();}};
   ws.onclose=()=>{setConn(false);held=false;setTimeout(connect,1500);};
 }
 function setConn(ok){const c=$("conn");c.textContent=ok?"base ok":"no base";c.className="pill "+(ok?"ok":"bad");}
 const send=(t,data)=>{if(ws&&ws.readyState===1)ws.send(JSON.stringify({v:1,t,ts:Date.now()/1e3,from:me||"ui",data}));};
 function cmd(c,args){if(!me)return;send("node_cmd",{target:me,cmd:c,args:args||{}});}
+const setHTML=(el,html)=>{if(el._html!==html){el._html=html;el.innerHTML=html;return true;}return false;};
 function toast(s,ms){const t=$("toast");t.textContent=s;t.classList.add("show");clearTimeout(t._h);t._h=setTimeout(()=>t.classList.remove("show"),ms||1800);}
 function pick(id){me=id;try{localStorage.setItem("convoy.rider",id);}catch(e){}history.replaceState(null,"",`/rider?id=${encodeURIComponent(id)}`);scan=null;render();}
 async function wakeLock(){try{if(!wake&&navigator.wakeLock){wake=await navigator.wakeLock.request("screen");wake.addEventListener("release",()=>wake=null);}}catch(e){}}
 document.addEventListener("visibilitychange",()=>{if(document.hidden&&held){held=false;cmd("ptt",{on:false});}else if(!document.hidden)wakeLock();});
 // PTT: hold = gate forced open (the rider's answer to wind the VAD can't beat)
-function pttDown(ev){ev.preventDefault();if(held)return;held=true;cmd("ptt",{on:true});wakeLock();render();if(navigator.vibrate)navigator.vibrate(20);}
-function pttUp(ev){if(ev)ev.preventDefault();if(!held)return;held=false;cmd("ptt",{on:false});render();}
+// dead-man: the bridge releases PTT 6 s after the last "on"; re-arm every 2 s while held
+function pttDown(ev){ev.preventDefault();if(held)return;held=true;cmd("ptt",{on:true});clearInterval(pttTimer);pttTimer=setInterval(()=>held&&cmd("ptt",{on:true}),2000);wakeLock();render();if(navigator.vibrate)navigator.vibrate(20);}
+function pttUp(ev){if(ev)ev.preventDefault();clearInterval(pttTimer);if(!held)return;held=false;cmd("ptt",{on:false});render();}
 function linkWord(n){if(!n||n.rssi==null)return["?",""];const r=n.rssi,l=n.rtp_loss??0;if(r<-80||l>20)return["bad","bad"];if(r<-70||l>5)return["weak","warn"];return["good","ok"];}
 function render(){
   if(!snap)return;
@@ -106,17 +108,18 @@ function render(){
   p.innerHTML=held?`TRANSMITTING<small>release to stop</small>`:(talking?`ON AIR<small>voice detected — hold to force</small>`:`HOLD TO TALK<small>${n.online?"the gate opens for your voice; hold this when wind wins":"bridge offline — nothing will transmit"}</small>`);
   p.disabled=!n.online;
   $("roomnote").textContent=snap.self_move_ok?"":`— stop to change (moving ${snap.speed_kmh|0} km/h)`;
-  $("rooms").innerHTML=snap.rooms.map(rm=>`<button data-rm="${esc(rm)}" class="${r.room===rm?"on":""}" ${snap.self_move_ok?"":"disabled"}>${esc(rm)}</button>`).join("");
-  $("rooms").querySelectorAll("button").forEach(b=>b.onclick=()=>{send("move",{pid:me,room:b.dataset.rm,by:"self"});toast(`moving to ${b.dataset.rm}`);});
+  if(setHTML($("rooms"),snap.rooms.map(rm=>`<button data-rm="${esc(rm)}" class="${r.room===rm?"on":""}" ${snap.self_move_ok?"":"disabled"}>${esc(rm)}</button>`).join("")))
+    $("rooms").querySelectorAll("button").forEach(b=>b.onclick=()=>{send("move",{pid:me,room:b.dataset.rm,by:"self"});toast(`moving to ${b.dataset.rm}`);});
   let h=hs?`<div>${hs.connected?'<span class="pill ok">connected</span>':'<span class="pill bad">not connected</span>'} <b>${esc(hs.name||"?")}</b> <span class="muted">${esc(hs.mac||"")}</span></div>`:`<div class="muted">no headset paired yet</div>`;
   h+=`<div class="row"><button id="btre" ${n.online?"":"disabled"}>reconnect headset</button><button id="btscan" ${n.online?"":"disabled"}>${scan?"scanning…":"scan &amp; pair"}</button></div>`;
   if(scan&&scan.list)h+=scan.list.length?scan.list.map(x=>`<button data-mac="${esc(x.mac)}">${esc(x.name)} <span class="muted">${esc(x.mac)}${x.paired?" · paired":""}</span></button>`).join(""):`<div class="muted">nothing found — put the headset in pairing mode (hold its phone button until it flashes red/blue) and scan again</div>`;
-  $("hsbox").innerHTML=h;
-  $("btre").onclick=()=>{cmd("reconnect_bt");toast("reconnecting headset…");};
-  $("btscan").onclick=()=>{scan={list:null,at:Date.now()};cmd("bt_scan");toast("scanning 8 s — headset in pairing mode?");render();};
-  $("hsbox").querySelectorAll("button[data-mac]").forEach(b=>b.onclick=()=>{cmd("bt_pair",{mac:b.dataset.mac});toast("pairing…");});
-  $("kv").innerHTML=`<div>link<b class="${lc}">${lw}</b></div><div>signal<b>${n.rssi??"—"} dBm</b></div><div>loss<b>${n.rtp_loss??"—"}%</b></div><div>rate<b>${n.tx_rate??"—"} Mb</b></div><div>concealed<b>${mx.plc??0}</b></div><div>vad<b>${esc(n.vad_mode||"?")}</b></div>`;
-  $("feed").innerHTML=texts.map(t=>`<div>${new Date(t.at*1e3).toTimeString().slice(0,5)} <b>${esc(t.from)}</b>: ${esc(t.msg)}${t.spoken?' <span class="spk">♪</span>':""}</div>`).join("")||`<div class="muted">nothing yet</div>`;
+  if(setHTML($("hsbox"),h)){
+    $("btre").onclick=()=>{cmd("reconnect_bt");toast("reconnecting headset…");};
+    $("btscan").onclick=()=>{scan={list:null,at:Date.now()};cmd("bt_scan");toast("scanning 8 s — headset in pairing mode?");render();};
+    $("hsbox").querySelectorAll("button[data-mac]").forEach(b=>b.onclick=()=>{cmd("bt_pair",{mac:b.dataset.mac});toast("pairing…");});
+  }
+  setHTML($("kv"),`<div>link<b class="${lc}">${lw}</b></div><div>signal<b>${n.rssi??"—"} dBm</b></div><div>loss<b>${n.rtp_loss??"—"}%</b></div><div>rate<b>${n.tx_rate??"—"} Mb</b></div><div>concealed<b>${mx.plc??0}</b></div><div>vad<b>${esc(n.vad_mode||"?")}</b></div>`);
+  setHTML($("feed"),texts.map(t=>`<div>${new Date(t.at*1e3).toTimeString().slice(0,5)} <b>${esc(t.from)}</b>: ${esc(t.msg)}${t.spoken?' <span class="spk">♪</span>':""}</div>`).join("")||`<div class="muted">nothing yet</div>`);
   $("simcard").hidden=snap.mode!=="sim";
   const a=n.last_ack; if(a&&lastAck===null)lastAck=a.at;   // acks from before this page opened are history, not news
   if(a&&a.at!==lastAck){lastAck=a.at;

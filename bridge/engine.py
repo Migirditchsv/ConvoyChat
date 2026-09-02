@@ -7,6 +7,7 @@ import numpy as np
 
 from common.audio import FRAME_MS
 from common.dsp import tone
+from common import earcons
 from common.protocol import MIXER_RTP_PORT
 from bridge.audio.chain import UplinkChain, DownlinkChain
 from bridge.io_adapters import UdpPort
@@ -37,6 +38,9 @@ class BridgeEngine:
         self._frame_n = 0
         self._task = None
         self._w_decoded = self._w_concealed = 0
+        self._loss_cache: float | None = None
+        self._loss_at = 0.0
+        self._ptt_frames_left = 0     # dead-man: PTT releases itself unless refreshed
 
     def _on_degrade(self, mode: str) -> None:
         self.stats["vad_mode"] = mode
@@ -52,9 +56,28 @@ class BridgeEngine:
     # -- push-to-talk (rider phone page): bypasses the classifier while held.
     # The measured 120 km/h gap (DR-008) is closed by the rider's thumb, not
     # by lowering thresholds into gust territory. --
-    def set_ptt(self, on: bool) -> None:
-        self.up.gate.force_open = bool(on)
-        self.stats["ptt"] = bool(on)
+    PTT_HOLD_S = 6.0      # the phone re-sends `ptt on` every ~2 s while held
+
+    def set_ptt(self, on: bool, hold_s: float | None = None) -> None:
+        """PTT is a dead-man switch: `on` arms the gate for hold_s and must be
+        refreshed while the thumb is down. If the control link drops with the
+        button held, the gate closes itself instead of transmitting wind until
+        the link returns (the release command would never arrive)."""
+        if on:
+            self.up.gate.force_open = True
+            self.stats["ptt"] = True
+            self._ptt_frames_left = max(1, int((hold_s or self.PTT_HOLD_S) * 1000 / FRAME_MS))
+        else:
+            self._release_ptt(auto=False)
+
+    def _release_ptt(self, auto: bool) -> None:
+        was = self.up.gate.force_open
+        self.up.gate.force_open = False
+        self.stats["ptt"] = False
+        self._ptt_frames_left = 0
+        if auto and was:
+            self.stats["ptt_autorelease"] = self.stats.get("ptt_autorelease", 0) + 1
+            self.down.queue_earcon(earcons.render("ptt_off"))    # SAFE-2: audible
 
     async def start(self):
         self.udp.on_packet = lambda data, addr: (self.down.push_rtp(data),
@@ -76,6 +99,10 @@ class BridgeEngine:
             self._frame_n += 1
             if self.hb_tone and self._frame_n % self._hb_every == 0:
                 self.down.queue_earcon(tone(880, 0.03, level_db=-30))
+            if self._ptt_frames_left > 0:
+                self._ptt_frames_left -= 1
+                if self._ptt_frames_left == 0:
+                    self._release_ptt(auto=True)
             self.sink.write(self.down.pull())
             next_t += FRAME_MS / 1000
             await asyncio.sleep(max(0.0, next_t - loop.time()))
@@ -91,15 +118,21 @@ class BridgeEngine:
     def set_hb_tone(self, on: bool) -> None:
         self.hb_tone = bool(on)
 
-    def downlink_loss_pct(self) -> float | None:
-        """Loss the rider hears over the last window (concealed / arrived+concealed),
-        then the window resets. None until the mixer has sent anything."""
+    def downlink_loss_pct(self, min_interval_s: float = 1.0) -> float | None:
+        """Loss the rider hears over the last window (concealed / arrived+concealed).
+        The window is re-cut at most every min_interval_s; callers inside that
+        interval (heartbeat AND the eviction tick both ask) get the same answer
+        instead of each seeing half a window. None until the mixer has sent."""
+        import time
+        now = time.monotonic()
+        if now - self._loss_at < min_interval_s:
+            return self._loss_cache
         d = self.down
         got, plc = d.decoded - self._w_decoded, d.concealed - self._w_concealed
         self._w_decoded, self._w_concealed = d.decoded, d.concealed
-        if got + plc == 0:
-            return None
-        return round(100.0 * plc / (got + plc), 1)
+        self._loss_at = now
+        self._loss_cache = None if got + plc == 0 else round(100.0 * plc / (got + plc), 1)
+        return self._loss_cache
 
     async def wait(self):
         if self._task:
