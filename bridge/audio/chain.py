@@ -59,6 +59,7 @@ class DownlinkChain:
     def __init__(self, fs: int = 16000, depth: int = 3):
         self.dec = Decoder(fs)
         self.depth = depth
+        self.volume_pct = 100          # rider helmet volume (remote-adjustable)
         self._buf: dict[int, bytes] = {}
         self._next: int | None = None
         self._earcons: deque[np.ndarray] = deque()
@@ -99,7 +100,10 @@ class DownlinkChain:
                 self._misses = 0
         else:
             out = np.zeros(FRAME, dtype=np.int16)
-        if self._earcons:
+        if self.volume_pct != 100:
+            out = np.clip(out.astype(np.int32) * self.volume_pct // 100,
+                          -32768, 32767).astype(np.int16)
+        if self._earcons:                     # earcons AFTER volume: audible even at vol 0
             e = self._earcons.popleft().astype(np.int32)
             out = np.clip(out.astype(np.int32) + e, -32768, 32767).astype(np.int16)
         return out

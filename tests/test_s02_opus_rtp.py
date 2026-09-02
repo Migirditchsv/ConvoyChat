@@ -14,7 +14,7 @@ def _speech_frames(n):
 
 def test_ptime_and_seq():
     up = UplinkChain("t", prefer_silero=False)
-    up.gate._need_open = 0  # force-open path for framing check
+    up.gate.force_open = True  # bypass classification for framing check
     pkts = []
     for f in _speech_frames(10):
         pkts += up.feed(f)
@@ -35,7 +35,7 @@ def test_gate_is_dtx():
 
 def test_plc_and_decode():
     up = UplinkChain("t", prefer_silero=False)
-    up.gate._need_open = 0
+    up.gate.force_open = True
     down = DownlinkChain()
     pkts = []
     for f in _speech_frames(6):

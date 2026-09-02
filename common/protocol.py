@@ -18,7 +18,10 @@ CONTROL_PORT = 8800
 PROTO_V = 1
 
 MSG_TYPES = {"hello", "snapshot", "heartbeat", "vad", "move", "lead_transfer",
-             "duck", "text", "tts", "gps", "bye"}
+             "duck", "text", "tts", "gps", "bye",
+             "node_cmd",   # base->node remote debug: reboot/reconnect/volume/identify/settings
+             "ack",        # node->base command result {cmd_id, ok, detail}
+             "audio_ctl"}  # ui->base: {pid, mute?|trim?} composed with the ladder
 
 
 def ssrc_of(node_id: str) -> int:

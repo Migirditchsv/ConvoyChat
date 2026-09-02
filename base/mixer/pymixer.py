@@ -30,6 +30,9 @@ class _Part:
         self.ts_out = 0
         self.active = False
         self.last_rms = 0.0
+        self.pkts = 0
+        self.plc = 0
+        self.last_rx = 0.0
 
 
 class PyMixer(MixerAPI):
@@ -74,8 +77,14 @@ class PyMixer(MixerAPI):
         self.broadcast_pid = pid
 
     def stats(self) -> dict:
+        try:
+            now = asyncio.get_event_loop().time()
+        except RuntimeError:
+            now = 0.0
         return {pid: {"room": p.room, "gain": p.gain, "active": p.active,
-                      "rms": round(p.last_rms, 1)} for pid, p in self.parts.items()}
+                      "rms": round(p.last_rms, 1), "pkts": p.pkts, "plc": p.plc,
+                      "rx_age_s": round(now - p.last_rx, 1) if p.last_rx else None}
+                for pid, p in self.parts.items()}
 
     # -- internals --
     def _rx(self, data: bytes, addr) -> None:
@@ -87,9 +96,11 @@ class PyMixer(MixerAPI):
         if p is None:
             return
         p.buf[seq] = payload
+        p.pkts += 1
+        p.last_rx = asyncio.get_event_loop().time()
         if p.next_seq is None:
             p.next_seq = seq
-        while len(p.buf) > 16:   # >= gate pre-roll burst (10) + margin
+        while len(p.buf) > 24:   # >= gate pre-roll burst (15) + margin
             p.buf.pop(min(p.buf), None)
 
     def _pop_frame(self, p: _Part) -> np.ndarray:
@@ -99,6 +110,7 @@ class PyMixer(MixerAPI):
             p.active = True
         elif p.next_seq is not None and p.buf:
             f = p.dec.decode(None, FRAME)                # PLC over a gap
+            p.plc += 1
             p.next_seq = (p.next_seq + 1) & 0xFFFF
         else:
             f = np.zeros(FRAME, dtype=np.int16)          # gated / absent = silence

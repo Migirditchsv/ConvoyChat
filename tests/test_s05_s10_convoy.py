@@ -27,7 +27,7 @@ async def _two_node_run(profile: str, port: int, dur_s: float = 6.0,
                           mixer_addr=("127.0.0.1", pport),
                           down_port=roster.riders["r0_lead"].down_port,
                           prefer_silero=False)
-    talker.up.gate._need_open = 0     # force-open: S-05 probes transport, not the gate
+    talker.up.gate.force_open = True     # force-open: S-05 probes transport, not the gate
     hear_sink = ArraySink()
     hearer = BridgeEngine("r1_chase", ArraySource(total, []), hear_sink,
                           mixer_addr=("127.0.0.1", pport),
@@ -54,8 +54,11 @@ async def _two_node_run(profile: str, port: int, dur_s: float = 6.0,
 def test_s05_latency_parkinglot():
     ref, heard = asyncio.run(_two_node_run("parkinglot", 5430))
     assert dbfs(heard) > -50, "no audio arrived"
-    d = find_delay_s(heard, np.concatenate([np.zeros(16000, np.int16), ref]))
-    # chirp injected at t=1.0 s into the timeline; delay beyond that is the path
+    # correlate only around the FIRST chirp (t=1.0 s) — the timeline carries a
+    # second chirp at t=3.5 s for S-10, and an unwindowed matched filter can
+    # lock onto it instead (observed: 2555 ms = 2500 ms schedule + path)
+    window = heard[:int(3.0 * 16000)]
+    d = find_delay_s(window, np.concatenate([np.zeros(16000, np.int16), ref]))
     assert d <= 0.35, f"one-way sim path {d*1000:.0f} ms (budget 350)"
 
 

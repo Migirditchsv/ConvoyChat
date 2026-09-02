@@ -5,6 +5,8 @@ __pycache__/
 .pytest_cache/
 sim/data/
 *.wav
+!sim/ext/speech/*.wav
+!sim/ext/wind/*.wav
 *.npy
 rides/
 .coverage

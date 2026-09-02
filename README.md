@@ -24,16 +24,19 @@ to `docs/decisions/`.
 
 ## Quickstart (any Linux, no hardware)
 
-    sudo apt install libopus0 espeak-ng   # opus runtime + fixture voices
+    sudo apt install libopus0 espeak-ng   # opus runtime + fixture fallback voices
     make setup
-    make test                             # Tier-0: S-01 .. S-10
+    make test        # Tier-0: S-01 .. S-12 (31 tests)
+    make base        # mixer + control WS :8800 + dashboard http :8080
+    make convoy      # 6 simulated riders against it
 
 ## Status
 
 | Milestone | State |
 |---|---|
 | M0 scaffold + fixtures + chain-in-sim | done — S-01..S-06 green |
-| M1 virtual convoy (mixer/orc/UI/media) | done — S-07..S-11 green (29/29) |
+| M1 virtual convoy (mixer/orc/UI/media) | done — S-07..S-12 green (31/31) |
+| M1.1 real-speech fixtures + operator debug plane | done — DR-008/009 |
 | M2 Bluetooth masquerade on metal | next — blocked on hardware arrival |
 
 Safety rules SAFE-1..3 (fail-open mic, audible truth, priority never behind

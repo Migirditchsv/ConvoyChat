@@ -13,7 +13,9 @@ from common.audio import FS, FRAME, read_wav, write_wav, resample_to, normalize_
 from common.dsp import Biquad
 
 DATA = os.path.join(os.path.dirname(__file__), "data")
-FIXTURE_REV = 3   # bump to force regeneration when synthesis changes
+EXT_SPEECH = os.path.join(os.path.dirname(__file__), "ext", "speech")
+EXT_WIND = os.path.join(os.path.dirname(__file__), "ext", "wind")
+FIXTURE_REV = 5   # bump to force regeneration when synthesis changes
 PHRASES = ["gravel on the left", "car pulling out ahead", "slowing hard now",
            "fuel stop in ten miles", "pothole right side", "all clear come through"]
 # wind level vs speed (dBFS), speech at -20 dBFS -> SNR +12 / 0 / -6
@@ -28,6 +30,39 @@ def _espeak(text: str) -> np.ndarray:
     x, fs = read_wav(tmp)
     os.remove(tmp)
     return normalize_dbfs(resample_to(x, fs), SPEECH_DB)
+
+
+def _speech_clips() -> tuple[list[np.ndarray], str]:
+    """Real recorded speech from sim/ext/speech/ when present (committed
+    Harvard-sentence utterances, user-supplied public sample audio); espeak
+    synthesis as the hermetic fallback."""
+    if os.path.isdir(EXT_SPEECH):
+        wavs = sorted(f for f in os.listdir(EXT_SPEECH) if f.endswith(".wav"))
+        if wavs:
+            clips = []
+            for f in wavs:
+                x, fs = read_wav(os.path.join(EXT_SPEECH, f))
+                clips.append(normalize_dbfs(resample_to(x, fs), SPEECH_DB))
+            return clips, f"ext:{len(clips)}"
+    return [_espeak(p) for p in PHRASES], "espeak"
+
+
+def _wind_take(dur_s: float, speed_kmh: int, seed: int = 7) -> tuple[np.ndarray, str]:
+    """Real wind recordings from sim/ext/wind/ when present (drop in e.g. the
+    RWTH IKS wind-noise database, MIT-licensed — see README); synthetic
+    red-tilted gusty noise as the hermetic fallback. Real takes are tiled/cut
+    to duration and level-set by the speed table."""
+    if os.path.isdir(EXT_WIND):
+        wavs = sorted(f for f in os.listdir(EXT_WIND) if f.endswith(".wav"))
+        if wavs:
+            rng = np.random.default_rng(seed + speed_kmh)
+            x, fs = read_wav(os.path.join(EXT_WIND, wavs[rng.integers(len(wavs))]))
+            x = resample_to(x, fs)
+            n = int(dur_s * FS)
+            reps = int(np.ceil(n / len(x)))
+            x = np.tile(x, reps)[:n]
+            return normalize_dbfs(x, WIND_DB[speed_kmh]), "ext"
+    return synth_wind(dur_s, speed_kmh, seed), "synth"
 
 
 def synth_wind(dur_s: float, speed_kmh: int, seed: int = 7) -> np.ndarray:
@@ -59,6 +94,21 @@ def headset_sim(x: np.ndarray) -> np.ndarray:
     return np.clip(out, -32768, 32767).astype(np.int16)
 
 
+def _post_sim_level(x: np.ndarray) -> float:
+    """Level after the headset chain. Spectral shape decides how much a
+    signal loses to the 300-3400 band-limit (a deep voice loses >13 dB, our
+    synthetic wind ~5 dB), so SNR tiers are only meaningful if levels are
+    calibrated POST-band-limit — which is also where a real headset's AGC
+    acts. Measured per clip, applied as pre-mix makeup gain."""
+    return dbfs(headset_sim(x))
+
+
+def _calibrate(x: np.ndarray, target_post_db: float) -> np.ndarray:
+    g = target_post_db - _post_sim_level(x)
+    y = x.astype(np.float64) * (10 ** (g / 20))
+    return np.clip(y, -32768, 32767).astype(np.int16)
+
+
 def build(force: bool = False) -> dict:
     os.makedirs(DATA, exist_ok=True)
     manifest_path = os.path.join(DATA, "manifest.json")
@@ -67,14 +117,18 @@ def build(force: bool = False) -> dict:
             m = json.load(f)
         if m.get("rev") == FIXTURE_REV:
             return m
-    speech = [_espeak(p) for p in PHRASES]
+    speech, speech_src = _speech_clips()
+    speech = [_calibrate(sp, SPEECH_DB) for sp in speech]
     sets = {}
+    wind_src = "synth"
     for speed, _ in WIND_DB.items():
         dur = 60.0
-        wind = synth_wind(dur, speed)
+        wind, wind_src = _wind_take(dur, speed)
+        wind = _calibrate(wind, WIND_DB[speed])
         # long wind-only take for S-04 rate statistics, faded in to kill the
         # filter/expander warmup transient (a click Silero reads as an onset)
-        wl = synth_wind(300.0, speed, seed=99).astype(np.float64)
+        wl, _ = _wind_take(300.0, speed, seed=99)
+        wl = _calibrate(wl, WIND_DB[speed]).astype(np.float64)
         nramp = int(0.5 * FS); wl[:nramp] *= np.linspace(0, 1, nramp)
         write_wav(os.path.join(DATA, f"windlong_{speed}.wav"),
                   headset_sim(wl.astype(np.int16)))
@@ -111,9 +165,11 @@ def build(force: bool = False) -> dict:
     # one clean speech clip for convoy scripts + probes
     clip = headset_sim(speech[0])
     write_wav(os.path.join(DATA, "phrase.wav"), clip)
-    sets["phrase"] = {"wav": "phrase.wav", "text": PHRASES[0]}
+    sets["phrase"] = {"wav": "phrase.wav",
+                      "text": PHRASES[0] if speech_src == "espeak" else "harvard_00"}
     h = hashlib.sha256(json.dumps(sets, sort_keys=True).encode()).hexdigest()[:12]
-    manifest = {"rev": FIXTURE_REV, "hash": h, "fs": FS, "sets": sets}
+    manifest = {"rev": FIXTURE_REV, "hash": h, "fs": FS, "sets": sets,
+                "speech_source": speech_src, "wind_source": wind_src}
     with open(manifest_path, "w") as f:
         json.dump(manifest, f, indent=1)
     print(f"fixtures built -> {DATA} ({h})")

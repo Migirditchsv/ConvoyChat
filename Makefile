@@ -19,4 +19,7 @@ test-fast:        ## unit tests only (no realtime convoy tests)
 convoy:           ## run a 6-rider simulated convoy interactively
 	$(PY) -m sim.convoy --riders 6 --profile parkinglot
 
-.PHONY: setup fixtures earcons test test-fast convoy
+base:             ## run the base station (mixer + control WS + dashboard) on a demo roster
+	$(PY) -m base.main
+
+.PHONY: setup fixtures earcons test test-fast convoy base
