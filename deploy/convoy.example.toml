@@ -1,0 +1,27 @@
+# ConvoyChat bridge identity — lives at /boot/convoy.toml on each Pi (INV-11).
+# Everything except [node] id has a working default.
+
+[node]
+id = "r2_rider"             # must match a rider id in the base's roster.yaml
+base = "192.168.1.2"        # the chase-car base station (mixer + control)
+# down_port = 6104          # normally taken from the roster: 6100 + 2*index
+# speed_kmh = 0             # static wind estimate for the HPF until GPS lands
+
+[audio]
+# Raw s16le / 16 kHz / mono on a pipe. PipeWire (RPi OS Bookworm) shown;
+# bluez-alsa alternative: "arecord -q -D bluealsa:DEV=<mac>,PROFILE=sco -f S16_LE -r 16000 -c 1 -t raw -"
+source_cmd = "pw-record --rate 16000 --channels 1 --format s16 --latency 60ms -"
+sink_cmd   = "pw-play --rate 16000 --channels 1 --format s16 --latency 60ms -"
+prefer_silero = true        # false = energy VAD only (saves ~15% CPU on a 3A+)
+
+[bt]
+headset_mac = ""            # set by `bridgectl pair` or the rider page; blank = unpaired
+
+[wifi]
+iface = "wlan0"             # 5 GHz USB adapter (INV-4); onboard is 2.4 only
+
+[actions]
+enabled = false             # true on a real bike: reboot/reconnect shells actually run
+
+[net]
+node_token = ""             # if the roster sets net.node_token, must match

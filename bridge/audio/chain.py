@@ -17,6 +17,12 @@ from bridge.audio.vad import SafeVad
 from bridge.audio.gate import SpeechGate
 
 
+def _oldest(buf: dict, ref: int) -> int:
+    """Held seq closest ahead of `ref`, wrap-safe (16-bit serial arithmetic).
+    Raw min() picks seq 0 over 65535 at the wrap — a glitch once an hour."""
+    return min(buf, key=lambda s: (s - ref) & 0xFFFF)
+
+
 class UplinkChain:
     def __init__(self, node_id: str, fs: int = 16000, prefer_silero: bool = True,
                  on_vad=None, on_degrade=None):
@@ -64,6 +70,9 @@ class DownlinkChain:
         self._next: int | None = None
         self._earcons: deque[np.ndarray] = deque()
         self._misses = 0
+        self.pulled = 0           # frames handed to the sink
+        self.decoded = 0          # ... from a real packet
+        self.concealed = 0        # ... PLC (a packet the mixer sent never arrived)
 
     def push_rtp(self, pkt: bytes) -> None:
         try:
@@ -74,7 +83,7 @@ class DownlinkChain:
         if self._next is None:
             self._next = seq
         while len(self._buf) > self.depth * 4:      # runaway guard
-            self._buf.pop(min(self._buf), None)
+            self._buf.pop(_oldest(self._buf, self._next), None)
 
     def queue_earcon(self, pcm: np.ndarray) -> None:
         for i in range(0, len(pcm), FRAME):
@@ -84,20 +93,24 @@ class DownlinkChain:
             self._earcons.append(f.astype(np.int16))
 
     def pull(self) -> np.ndarray:
+        self.pulled += 1
         if self._next is not None and self._next in self._buf:
             out = self.dec.decode(self._buf.pop(self._next), FRAME)
             self._next = (self._next + 1) & 0xFFFF
             self._misses = 0
+            self.decoded += 1
         elif self._next is not None and self._buf:
             self._misses += 1
             if self._misses <= 2:
                 out = self.dec.decode(None, FRAME)          # PLC
                 self._next = (self._next + 1) & 0xFFFF
+                self.concealed += 1
             else:                                           # resync jump
-                self._next = min(self._buf)
+                self._next = _oldest(self._buf, self._next)
                 out = self.dec.decode(self._buf.pop(self._next), FRAME)
                 self._next = (self._next + 1) & 0xFFFF
                 self._misses = 0
+                self.decoded += 1
         else:
             out = np.zeros(FRAME, dtype=np.int16)
         if self.volume_pct != 100:

@@ -16,31 +16,41 @@ to `docs/decisions/`.
 ## Layout
 
     common/   protocol, roster, DSP, Opus ctypes binding, earcons
-    bridge/   edge node: VAD gate + audio chain, eviction policy, agent
-    base/     mixer (MixerAPI + pymixer), orchestrator + ladder, web UI, media
-    sim/      fixtures, packet impairment proxy, virtual convoy
-    tests/    S-xx Tier-0 suite (no hardware needed)
-    tools/    bridgectl / fieldlog stubs (device-side, filled at M2)
+    bridge/   edge node: main (Pi entry point), config (/boot/convoy.toml),
+              VAD gate + audio chain, subprocess audio IO, agent, link stats
+              + eviction policy
+    base/     main (--mode sim|hw|field), mixer (MixerAPI + pymixer),
+              orchestrator + ladder, pages (/ /rider /ops), media + TTS
+    sim/      fixtures, packet impairment proxy, live virtual riders, demo
+    deploy/   roster + convoy.toml examples, systemd units
+    tests/    S-01..S-17 Tier-0 suite (no hardware needed)
+    docs/     runbook (the three modes), decisions DR-001..010, review notes
 
 ## Quickstart (any Linux, no hardware)
 
-    sudo apt install libopus0 espeak-ng   # opus runtime + fixture fallback voices
+    sudo apt install libopus0 espeak-ng   # opus runtime + TTS/fixture voices
     make doctor      # preflight — every dependency checked, with remedies
     make setup
-    make demo        # START HERE: 40 s scripted ride on the real stack —
-                     #   live dashboard at http://localhost:8080 (controls work
-                     #   mid-ride), then demo_out/ears/*.wav = what each rider
-                     #   heard, mouths/*.wav = what their mic picked up,
-                     #   timeline.txt = every gate/duck/move/ack
+    make up-sim      # START HERE: the whole network on this laptop, forever.
+                     #   Prints the LAN URL. Any phone on the Wi-Fi opens it:
+                     #   /rider = the rider's page (hold-to-talk, volume, room,
+                     #   headset pairing), /ops = chase-car dashboard.
+                     #   Six virtual riders run the real bridge engine on wind +
+                     #   real speech; the phone page's TALK button drives them.
+    make demo        # the 40 s scripted tour instead: writes demo_out/*.wav
     make listen      # play the headline demo recording
-    make base-live   # base + YOUR speakers in room `main`: open the dashboard,
-                     #   type in the text bar, press send — you hear the TTS
-    make test        # Tier-0: S-01 .. S-12 (32 tests, ~90 s)
-    make base        # base station alone — prints one line, then serves (Ctrl-C)
+    make test        # Tier-0: S-01 .. S-17 (57 tests, ~70 s)
 
-Nothing compiles — pure Python over system libopus. `make demo`'s product is
-the live dashboard plus FILES in demo_out/ (only `make listen` touches your
-speakers). New to the project? Read `catchup.md`.
+Three modes, one stack — `docs/runbook.md` is the copy-paste guide:
+
+    make up-sim      # sim: router, phones, bridges all spoofed on one machine
+    make up          # hardware test: real Pis + headsets, verbose diagnostics
+    make up-field    # field: same, quiet; deploy/*.service for boot-time
+    make bridge      # on a Pi: the headset bridge from /boot/convoy.toml
+
+Nothing compiles — pure Python over system libopus. Phones never carry
+audio (INV-10); the pages are plain HTTP on the convoy Wi-Fi and need no
+internet. New to the project? Read `catchup.md`.
 
 ## Status
 
@@ -49,6 +59,7 @@ speakers). New to the project? Read `catchup.md`.
 | M0 scaffold + fixtures + chain-in-sim | done — S-01..S-06 green |
 | M1 virtual convoy (mixer/orc/UI/media) | done — S-07..S-12 green (31/31) |
 | M1.1 real-speech fixtures + operator debug plane | done — DR-008/009 |
+| M1.2 LAN-ready: rider phone page, PTT, bridge entry point, three run modes | done — DR-010, S-13..S-17 (57/57) |
 | M2 Bluetooth masquerade on metal | next — blocked on hardware arrival |
 
 Safety rules SAFE-1..3 (fail-open mic, audible truth, priority never behind

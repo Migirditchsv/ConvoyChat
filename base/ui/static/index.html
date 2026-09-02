@@ -1,132 +1,32 @@
-<!doctype html><html><head><meta charset="utf-8">
+<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>convoy</title>
+<link rel="manifest" href="/manifest.webmanifest">
 <style>
-:root{--bg:#14181a;--card:#1b2124;--in:#232a2e;--line:#313a3e;--tx:#dce2e2;--dim:#939c9e;
---amber:#e0a03c;--sage:#7cbe9b;--rust:#de7a5c;--slate:#8fb3c9}
-*{box-sizing:border-box}
-body{margin:0;background:var(--bg);color:var(--tx);font:15px/1.5 system-ui}
-header{padding:10px 16px;border-bottom:1px solid var(--line);display:flex;gap:14px;align-items:center;flex-wrap:wrap;position:sticky;top:0;background:var(--bg);z-index:5}
-h1{font-size:16px;margin:0}
-#state{color:var(--dim);font-size:12px;flex:1;min-width:180px}
-.tgl{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--dim);cursor:pointer;user-select:none}
-.tgl input{accent-color:var(--amber)}
-main{padding:12px;display:grid;gap:10px;grid-template-columns:repeat(auto-fill,minmax(300px,1fr))}
-.card{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:12px 14px}
-.card.offline{border-color:var(--rust)}
-.hd{display:flex;align-items:baseline;gap:8px}
-.hd h2{margin:0;font-size:15px}
-.role{color:var(--amber);font-size:11px;text-transform:uppercase;letter-spacing:.06em}
-.age{margin-left:auto;font-size:11px;color:var(--dim)}
-.age.bad{color:var(--rust);font-weight:600}
-.badges{display:flex;gap:6px;margin:6px 0;flex-wrap:wrap}
-.b{font-size:10.5px;padding:1px 7px;border-radius:9px;border:1px solid var(--line);color:var(--dim)}
-.b.talk{border-color:var(--sage);color:var(--sage)}
-.b.clip{border-color:var(--rust);color:var(--rust)}
-.b.mut{border-color:var(--rust);color:var(--rust)}
-.net{display:grid;grid-template-columns:repeat(4,1fr);gap:4px;font-size:11px;color:var(--dim);
-background:var(--in);border-radius:5px;padding:6px 8px;margin:6px 0}
-.net b{display:block;color:var(--tx);font-weight:600;font-variant-numeric:tabular-nums}
-.net .warn b{color:var(--amber)}.net .bad b{color:var(--rust)}
-.rooms{display:flex;gap:5px;flex-wrap:wrap;margin:7px 0 4px}
-button{padding:4px 9px;background:var(--in);border:1px solid var(--line);color:var(--tx);
-border-radius:5px;cursor:pointer;font-size:12px}
-button:hover{border-color:var(--amber)}
-button.on{border-color:var(--amber);color:var(--amber)}
-button.danger{border-color:var(--rust);color:var(--rust)}
-.mix{display:flex;align-items:center;gap:8px;margin:6px 0;font-size:12px;color:var(--dim)}
-.mix input[type=range]{flex:1;accent-color:var(--amber);min-width:60px}
-.dbg{display:flex;gap:5px;flex-wrap:wrap;border-top:1px dashed var(--line);padding-top:8px;margin-top:6px}
-#textbar{grid-column:1/-1;display:flex;gap:8px}
-#textbar input{flex:1;background:var(--card);border:1px solid var(--line);color:var(--tx);padding:8px;border-radius:5px}
-#textbar button{background:var(--amber);color:#14181a;font-weight:700;border:none;padding:8px 16px}
-#log{grid-column:1/-1;font:11px/1.6 ui-monospace,monospace;color:var(--dim);background:var(--card);
-border:1px solid var(--line);border-radius:8px;padding:8px 12px;max-height:110px;overflow-y:auto}
+:root{--bg:#14181a;--card:#1b2124;--line:#313a3e;--tx:#dce2e2;--dim:#939c9e;--amber:#e0a03c;--sage:#7cbe9b;--rust:#de7a5c}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--tx);font:17px/1.5 system-ui;min-height:100vh;display:flex;flex-direction:column}
+main{flex:1;display:flex;flex-direction:column;justify-content:center;gap:14px;padding:22px;max-width:520px;margin:0 auto;width:100%}
+h1{margin:0 0 4px;font-size:26px}h1 small{color:var(--dim);font-weight:400;font-size:14px;display:block}
+a.big{display:block;padding:26px 22px;border-radius:14px;border:2px solid var(--line);background:var(--card);color:var(--tx);text-decoration:none}
+a.big b{display:block;font-size:24px}a.big span{color:var(--dim);font-size:14px}
+a.big.rider{border-color:var(--amber)}a.big.rider b{color:var(--amber)}
+a.big.ops{border-color:var(--sage)}a.big.ops b{color:var(--sage)}
+#st{font-size:13px;color:var(--dim);text-align:center}#st.bad{color:var(--rust)}
+footer{padding:12px;text-align:center;font-size:12px;color:var(--dim)}
 </style></head><body>
-<header>
-  <h1>convoy</h1><span id="conn" style="font-size:11px;padding:2px 8px;border-radius:9px;border:1px solid var(--rust);color:var(--rust)">connecting…</span><span id="state"></span>
-  <label class="tgl"><input type="checkbox" id="hbt" onchange="hbToggle(this.checked)">heartbeat tone (all)</label>
-</header>
-<main id="grid"></main>
-<div style="padding:0 12px 14px;display:grid;gap:8px">
-  <div id="textbar"><input id="txt" placeholder="type here, press send — it is SPOKEN into room `main` (TTS)"
-    onkeydown="if(event.key==='Enter')sendText()">
-    <label class="tgl" style="align-self:center"><input type="checkbox" id="spk" checked>speak</label>
-    <button onclick="sendText()">send</button></div>
-  <div id="texts" style="font:12px/1.7 ui-monospace,monospace;color:var(--dim)"></div>
-  <div id="log" style="max-height:110px;overflow-y:auto;font:11px/1.6 ui-monospace,monospace;color:var(--dim);background:var(--card);border:1px solid var(--line);border-radius:8px;padding:8px 12px">— command log —</div>
-</div>
+<main>
+  <h1>convoy <small id="mode">connecting to base…</small></h1>
+  <a class="big rider" href="/rider"><b>I'm riding</b><span>your bridge: talk button, volume, room, headset pairing</span></a>
+  <a class="big ops" href="/ops"><b>Chase car / operator</b><span>every rider, mute &amp; trim, priority, announcements, remote fixes</span></a>
+  <div id="st"></div>
+</main>
+<footer>plain HTTP on the convoy Wi-Fi only · phones never carry audio (INV-10) · add this page to your home screen for full-screen use</footer>
 <script>
-let snap=null, log=[];
 const ws=new WebSocket(`ws://${location.hostname}:8800/`);
-const send=(t,data)=>ws.readyState===1&&ws.send(JSON.stringify({v:1,t,ts:Date.now()/1e3,from:"ui",data}));
-ws.onopen=()=>{send("hello",{kind:"ui"});const c=document.getElementById("conn");c.textContent="base connected";c.style.borderColor="var(--sage)";c.style.color="var(--sage)";};
-ws.onmessage=e=>{const m=JSON.parse(e.data); if(m.t==="snapshot"){snap=m.data;render();}};
-ws.onclose=()=>{const c=document.getElementById("conn");c.textContent="✕ base gone — is `make base` (or the demo) still running?";c.style.borderColor="var(--rust)";c.style.color="var(--rust)";};
-setInterval(()=>send("hello",{}),2000);
-function addlog(s){log.unshift(new Date().toTimeString().slice(0,8)+"  "+s); log=log.slice(0,40);}
-function cmd(target,c,args){send("node_cmd",{target,cmd:c,args:args||{}}); addlog(`→ ${target}: ${c} ${JSON.stringify(args||{})}`); setTimeout(()=>send("hello",{}),400);}
-function actl(pid,d){send("audio_ctl",{pid,...d}); setTimeout(()=>send("hello",{}),200);}
-function hbToggle(on){for(const id of Object.keys(snap?.riders||{})) if(id!=="music") cmd(id,"set_hb_tone",{on});}
-function reboot(id){if(confirm(`Reboot ${id}'s bridge? Their audio drops ~45 s.`)) cmd(id,"reboot");}
-function meter(l,v,u,warn,bad,inv){const c=v==null?"":(inv?(v<bad?"bad":v<warn?"warn":""):(v>bad?"bad":v>warn?"warn":""));
-  return `<div class="${c}">${l}<b>${v==null?"—":v}${u||""}</b></div>`;}
-function sendText(){
-  const el=document.getElementById("txt");
-  if(!el.value.trim())return;
-  send("text",{msg:el.value,speak:document.getElementById("spk").checked});
-  addlog("text: "+el.value); el.value="";
-  setTimeout(()=>send("hello",{}),400);
-}
-function render(){
-  const g=document.getElementById("grid"); if(!snap) return;
-  document.getElementById("state").textContent=
-    `talking: ${snap.talking.join(", ")||"—"} · ${snap.speed_kmh|0} km/h · rooms: ${snap.rooms.join("/")}`
-    + ` · tts: ${snap.tts_engine||"?"}${snap.announcing?" ← SPEAKING":""}`;
-  document.getElementById("texts").innerHTML=(snap.texts||[]).slice(-5).map(t=>
-    `<div>${new Date(t.at*1e3).toTimeString().slice(0,8)} <b style="color:var(--tx)">${t.from}</b>: ${t.msg}`
-    +`${t.spoken?' <span style="color:var(--sage)">♪ spoken</span>':t.error?` <span style="color:var(--rust)">tts failed: ${t.error}</span>`:''}</div>`).join("");
-  g.innerHTML="";
-  for(const [id,r] of Object.entries(snap.riders)){
-    if(r.role==="music"){continue;}
-    const n=snap.nodes[id]||{}, mx=(snap.mixer||{})[id]||{};
-    const age=n.age_s, off=age==null||age>5;
-    const el=document.createElement("div"); el.className="card"+(off?" offline":"");
-    el.innerHTML=`
-      <div class="hd"><h2>${id}</h2><span class="role">${r.role}</span>
-        <span class="age ${off?'bad':''}">${age==null?"never seen":off?`lost ${age|0}s ago`:`seen ${age.toFixed(0)}s`}</span></div>
-      <div class="badges">
-        ${n.vad_state?'<span class="b talk">talking</span>':''}
-        ${n.clip?'<span class="b clip">CLIP</span>':''}
-        ${r.muted?'<span class="b mut">MUTED</span>':''}
-        ${n.hb_tone?'<span class="b">hb-tone</span>':''}
-        <span class="b">vol ${n.volume??"?"}%</span>
-        ${n.last_ack?`<span class="b">${n.last_ack.ok?"✓":"✕"} ${n.last_ack.detail??""}</span>`:''}
-      </div>
-      <div class="net">
-        ${meter("rssi",n.rssi," dBm",-70,-80,true)}
-        ${meter("loss",n.rtp_loss,"%",5,20)}
-        ${meter("rate",n.tx_rate," Mb",24,12,true)}
-        ${meter("plc",mx.plc,"",50,200)}
-      </div>
-      <div class="rooms">${snap.rooms.map(rm=>
-        `<button class="${r.room===rm?'on':''}" onclick='send("move",{pid:"${id}",room:"${rm}",by:"chase"});setTimeout(()=>send("hello",{}),200)'>${rm}</button>`).join("")}
-        <button onclick='send("lead_transfer",{lead:"${id}"});setTimeout(()=>send("hello",{}),200)'>☆ lead</button></div>
-      <div class="mix">
-        <button class="${r.muted?'danger on':''}" onclick='actl("${id}",{mute:${!r.muted}})'>${r.muted?"unmute":"mute"}</button>
-        trim <input type="range" min="10" max="150" value="${r.trim}" onchange='actl("${id}",{trim:+this.value})'>
-        <span>${r.trim}%</span>
-      </div>
-      <div class="dbg">
-        <button onclick='cmd("${id}","adjust_volume",{delta:-10})'>vol −</button>
-        <button onclick='cmd("${id}","adjust_volume",{delta:10})'>vol +</button>
-        <button onclick='cmd("${id}","identify")'>identify</button>
-        <button onclick='cmd("${id}","reconnect_bt")'>BT ⟳</button>
-        <button onclick='cmd("${id}","reconnect_wifi")'>wifi ⟳</button>
-        <button class="danger" onclick='reboot("${id}")'>reboot</button>
-      </div>`;
-    g.appendChild(el);
-  }
-  document.getElementById("log").textContent=log.join("\n")||"— command log —";
-}
+ws.onopen=()=>ws.send(JSON.stringify({v:1,t:"hello",ts:Date.now()/1e3,from:"ui",data:{kind:"ui"}}));
+ws.onmessage=e=>{const m=JSON.parse(e.data);if(m.t!=="snapshot")return;const s=m.data;
+  const on=Object.values(s.nodes||{}).filter(n=>n.online).length, all=Object.values(s.riders).filter(r=>r.role!=="music").length;
+  document.getElementById("mode").textContent=`${s.mode==="sim"?"simulation on this machine":s.mode==="field"?"field":"hardware test"} · ${on}/${all} bridges online`;
+  document.getElementById("st").textContent=s.talking.length?`talking now: ${s.talking.join(", ")}`:"nobody talking";};
+ws.onclose=()=>{const e=document.getElementById("st");e.className="bad";e.textContent="base not reachable — is `make up` running on the chase-car machine?";};
 </script></body></html>

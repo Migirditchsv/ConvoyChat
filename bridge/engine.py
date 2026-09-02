@@ -14,28 +14,52 @@ from bridge.io_adapters import UdpPort
 
 class BridgeEngine:
     def __init__(self, node_id: str, source, sink, mixer_addr=("127.0.0.1", MIXER_RTP_PORT),
-                 down_port: int = 0, prefer_silero: bool = True, on_vad=None):
+                 down_port: int = 0, prefer_silero: bool = True, on_vad=None,
+                 bind_host: str = "127.0.0.1"):
+        """bind_host: where the downlink listens — "0.0.0.0" on a real bridge
+        (the mixer is another machine), loopback in sim/tests."""
         self.node_id = node_id
         self.source, self.sink = source, sink
         self.mixer_addr = mixer_addr
         self.down_port = down_port
+        self.bind_host = bind_host
         self.up = UplinkChain(node_id, prefer_silero=prefer_silero, on_vad=on_vad,
                               on_degrade=self._on_degrade)
+        self.vad_listeners: list = []    # extra on_vad(open) hooks (the agent forwards to base)
+        self.up.on_vad = self._fan_vad
+        self._user_on_vad = on_vad or (lambda open_: None)
         self.down = DownlinkChain()
         self.udp = UdpPort()
-        self.stats = {"tx_pkts": 0, "rx_pkts": 0, "vad_open": False}
+        self.stats = {"tx_pkts": 0, "rx_pkts": 0, "vad_open": False, "ptt": False,
+                      "vad_mode": self.up.vad.mode}
         self.hb_tone = False           # QoL: periodic soft tick = "link alive"
         self._hb_every = 5000 // FRAME_MS
         self._frame_n = 0
         self._task = None
+        self._w_decoded = self._w_concealed = 0
 
     def _on_degrade(self, mode: str) -> None:
         self.stats["vad_mode"] = mode
 
+    def _fan_vad(self, open_: bool) -> None:
+        self._user_on_vad(open_)
+        for cb in list(self.vad_listeners):
+            try:
+                cb(open_)
+            except Exception:
+                pass
+
+    # -- push-to-talk (rider phone page): bypasses the classifier while held.
+    # The measured 120 km/h gap (DR-008) is closed by the rider's thumb, not
+    # by lowering thresholds into gust territory. --
+    def set_ptt(self, on: bool) -> None:
+        self.up.gate.force_open = bool(on)
+        self.stats["ptt"] = bool(on)
+
     async def start(self):
         self.udp.on_packet = lambda data, addr: (self.down.push_rtp(data),
                                                  self.stats.__setitem__("rx_pkts", self.stats["rx_pkts"] + 1))
-        await self.udp.bind("127.0.0.1", self.down_port)
+        await self.udp.bind(self.bind_host, self.down_port)
         self._task = asyncio.create_task(self._run())
 
     async def _run(self):
@@ -66,6 +90,16 @@ class BridgeEngine:
 
     def set_hb_tone(self, on: bool) -> None:
         self.hb_tone = bool(on)
+
+    def downlink_loss_pct(self) -> float | None:
+        """Loss the rider hears over the last window (concealed / arrived+concealed),
+        then the window resets. None until the mixer has sent anything."""
+        d = self.down
+        got, plc = d.decoded - self._w_decoded, d.concealed - self._w_concealed
+        self._w_decoded, self._w_concealed = d.decoded, d.concealed
+        if got + plc == 0:
+            return None
+        return round(100.0 * plc / (got + plc), 1)
 
     async def wait(self):
         if self._task:

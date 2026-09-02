@@ -1,0 +1,147 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<link rel="icon" href="/icon.svg">
+<title>convoy ops</title>
+<style>
+:root{--bg:#14181a;--card:#1b2124;--in:#232a2e;--line:#313a3e;--tx:#dce2e2;--dim:#939c9e;
+--amber:#e0a03c;--sage:#7cbe9b;--rust:#de7a5c;--slate:#8fb3c9}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--tx);font:15px/1.5 system-ui}
+header{padding:10px 16px;border-bottom:1px solid var(--line);display:flex;gap:14px;align-items:center;flex-wrap:wrap;position:sticky;top:0;background:var(--bg);z-index:5}
+h1{font-size:16px;margin:0}h1 a{color:var(--dim);font-weight:400;font-size:12px;margin-left:8px;text-decoration:none}
+#state{color:var(--dim);font-size:12px;flex:1;min-width:180px}
+.tgl{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--dim);cursor:pointer;user-select:none}
+.tgl input{accent-color:var(--amber)}
+main{padding:12px;display:grid;gap:10px;grid-template-columns:repeat(auto-fill,minmax(300px,1fr))}
+.card{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:12px 14px}
+.card.offline{border-color:var(--rust)}
+.hd{display:flex;align-items:baseline;gap:8px}
+.hd h2{margin:0;font-size:15px}
+.role{color:var(--amber);font-size:11px;text-transform:uppercase;letter-spacing:.06em}
+.age{margin-left:auto;font-size:11px;color:var(--dim)}
+.age.bad{color:var(--rust);font-weight:600}
+.badges{display:flex;gap:6px;margin:6px 0;flex-wrap:wrap}
+.b{font-size:10.5px;padding:1px 7px;border-radius:9px;border:1px solid var(--line);color:var(--dim)}
+.b.talk{border-color:var(--sage);color:var(--sage)}
+.b.ptt{border-color:var(--amber);color:var(--amber)}
+.b.mut,.b.bad{border-color:var(--rust);color:var(--rust)}
+.net{display:grid;grid-template-columns:repeat(4,1fr);gap:4px;font-size:11px;color:var(--dim);
+background:var(--in);border-radius:5px;padding:6px 8px;margin:6px 0}
+.net b{display:block;color:var(--tx);font-weight:600;font-variant-numeric:tabular-nums}
+.net .warn b{color:var(--amber)}.net .bad b{color:var(--rust)}
+.rooms{display:flex;gap:5px;flex-wrap:wrap;margin:7px 0 4px}
+button{padding:4px 9px;background:var(--in);border:1px solid var(--line);color:var(--tx);
+border-radius:5px;cursor:pointer;font-size:12px}
+button:hover{border-color:var(--amber)}
+button.on{border-color:var(--amber);color:var(--amber)}
+button.danger{border-color:var(--rust);color:var(--rust)}
+.mix{display:flex;align-items:center;gap:8px;margin:6px 0;font-size:12px;color:var(--dim)}
+.mix input[type=range]{flex:1;accent-color:var(--amber);min-width:60px}
+.dbg{display:flex;gap:5px;flex-wrap:wrap;border-top:1px dashed var(--line);padding-top:8px;margin-top:6px}
+.hs{font-size:11px;color:var(--dim);margin:2px 0}
+#textbar{display:flex;gap:8px}
+#textbar input{flex:1;background:var(--card);border:1px solid var(--line);color:var(--tx);padding:8px;border-radius:5px}
+#textbar button{background:var(--amber);color:#14181a;font-weight:700;border:none;padding:8px 16px}
+#log{font:11px/1.6 ui-monospace,monospace;color:var(--dim);background:var(--card);
+border:1px solid var(--line);border-radius:8px;padding:8px 12px;max-height:110px;overflow-y:auto;white-space:pre-wrap}
+#sim{display:none;align-items:center;gap:6px;font-size:12px;color:var(--dim)}
+</style></head><body>
+<header>
+  <h1>convoy ops<a href="/">home</a><a href="/rider">rider page</a></h1>
+  <span id="conn" style="font-size:11px;padding:2px 8px;border-radius:9px;border:1px solid var(--rust);color:var(--rust)">connecting…</span><span id="state"></span>
+  <label id="sim">sim speed <input type="range" min="0" max="130" value="0" id="spd" style="accent-color:var(--amber)"><span id="spdv">0</span> km/h</label>
+  <label class="tgl"><input type="checkbox" id="hbt">heartbeat tone (all)</label>
+</header>
+<main id="grid"></main>
+<div style="padding:0 12px 14px;display:grid;gap:8px">
+  <div id="textbar"><input id="txt" placeholder="type here, press send — it is SPOKEN into room `main` (TTS)">
+    <label class="tgl" style="align-self:center"><input type="checkbox" id="spk" checked>speak</label>
+    <button id="sendbtn">send</button></div>
+  <div id="texts" style="font:12px/1.7 ui-monospace,monospace;color:var(--dim)"></div>
+  <div id="log">— command log —</div>
+</div>
+<script>
+const $=id=>document.getElementById(id);
+const esc=s=>String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+let snap=null, log=[], ws, seenAck={};
+function connect(){
+  ws=new WebSocket(`ws://${location.hostname}:8800/`);
+  ws.onopen=()=>{send("hello",{kind:"ui"});const c=$("conn");c.textContent="base connected";c.style.borderColor="var(--sage)";c.style.color="var(--sage)";};
+  ws.onmessage=e=>{const m=JSON.parse(e.data);if(m.t==="snapshot"){snap=m.data;render();}};
+  ws.onclose=()=>{const c=$("conn");c.textContent="✕ base gone — is `make up` still running?";c.style.borderColor="var(--rust)";c.style.color="var(--rust)";setTimeout(connect,1500);};
+}
+const send=(t,data)=>ws&&ws.readyState===1&&ws.send(JSON.stringify({v:1,t,ts:Date.now()/1e3,from:"ui",data}));
+setInterval(()=>send("hello",{}),10000);   // keepalive only: the base PUSHES snapshots
+function addlog(s){log.unshift(new Date().toTimeString().slice(0,8)+"  "+s); log=log.slice(0,60);}
+function cmd(target,c,args){send("node_cmd",{target,cmd:c,args:args||{}}); addlog(`→ ${target}: ${c} ${JSON.stringify(args||{})}`);}
+function actl(pid,d){send("audio_ctl",{pid,...d});}
+$("hbt").onchange=e=>{for(const id of Object.keys(snap?.riders||{})) if(snap.riders[id].role!=="music") cmd(id,"set_hb_tone",{on:e.target.checked});};
+$("spd").oninput=e=>{$("spdv").textContent=e.target.value;send("gps",{kmh:+e.target.value});};
+function reboot(id){if(confirm(`Reboot ${id}'s bridge? Their audio drops ~45 s.`)) cmd(id,"reboot");}
+function meter(l,v,u,warn,bad,inv){const c=v==null?"":(inv?(v<bad?"bad":v<warn?"warn":""):(v>bad?"bad":v>warn?"warn":""));
+  return `<div class="${c}">${l}<b>${v==null?"—":v}${u||""}</b></div>`;}
+function sendText(){const el=$("txt");if(!el.value.trim())return;send("text",{msg:el.value,speak:$("spk").checked});addlog("text: "+el.value);el.value="";}
+$("sendbtn").onclick=sendText;$("txt").onkeydown=e=>{if(e.key==="Enter")sendText();};
+function render(){
+  const g=$("grid"); if(!snap) return;
+  $("sim").style.display=snap.mode==="sim"?"flex":"none";
+  $("state").textContent=
+    `${snap.mode} · talking: ${snap.talking.join(", ")||"—"} · ${snap.speed_kmh|0} km/h · rooms: ${snap.rooms.join("/")}`
+    + ` · tts: ${snap.tts_engine||"?"}${snap.announcing?" ← SPEAKING":""}`;
+  $("texts").innerHTML=(snap.texts||[]).slice(-5).map(t=>
+    `<div>${new Date(t.at*1e3).toTimeString().slice(0,8)} <b style="color:var(--tx)">${esc(t.from)}</b>: ${esc(t.msg)}`
+    +`${t.spoken?' <span style="color:var(--sage)">♪ spoken</span>':t.error?` <span style="color:var(--rust)">tts failed: ${esc(t.error)}</span>`:''}</div>`).join("");
+  for(const [id,n] of Object.entries(snap.nodes||{})){const a=n.last_ack;if(a&&seenAck[id]!==a.at){seenAck[id]=a.at;if(a.ok!==null)addlog(`← ${id}: ${a.ok?"✓":"✕"} ${a.cmd||""} ${typeof a.detail==="string"?a.detail:JSON.stringify(a.detail)}`);}}
+  g.innerHTML="";
+  for(const [id,r] of Object.entries(snap.riders)){
+    if(r.role==="music"){continue;}
+    const n=snap.nodes[id]||{}, mx=(snap.mixer||{})[id]||{};
+    const age=n.age_s, off=!n.online, hs=n.headset;
+    const el=document.createElement("div"); el.className="card"+(off?" offline":"");
+    el.innerHTML=`
+      <div class="hd"><h2>${esc(id)}</h2><span class="role">${esc(r.role)}</span>
+        <span class="age ${off?'bad':''}">${age==null?"never seen":off?`lost ${age|0}s ago`:`seen ${age.toFixed(0)}s`}${n.ip?` · ${esc(n.ip)}`:""}</span></div>
+      <div class="badges">
+        ${snap.talking.includes(id)?'<span class="b talk">talking</span>':''}
+        ${n.ptt?'<span class="b ptt">PTT</span>':''}
+        ${n.vad_mode&&n.vad_mode!=="silero"?`<span class="b bad">vad:${esc(n.vad_mode)}</span>`:''}
+        ${r.muted?'<span class="b mut">MUTED</span>':''}
+        ${n.hb_tone?'<span class="b">hb-tone</span>':''}
+        <span class="b">vol ${n.volume??"?"}%</span>
+        ${n.last_ack?`<span class="b">${n.last_ack.ok===null?"…":n.last_ack.ok?"✓":"✕"} ${esc(typeof n.last_ack.detail==="string"?n.last_ack.detail:(n.last_ack.cmd||""))}</span>`:''}
+      </div>
+      <div class="hs">headset: ${hs?`${esc(hs.name)} ${hs.connected?'<span style="color:var(--sage)">connected</span>':'<span style="color:var(--rust)">NOT connected</span>'}`:"none paired"}</div>
+      <div class="net">
+        ${meter("rssi",n.rssi," dBm",-70,-80,true)}
+        ${meter("loss",n.rtp_loss,"%",5,20)}
+        ${meter("rate",n.tx_rate," Mb",24,12,true)}
+        ${meter("plc",mx.plc,"",50,200)}
+      </div>
+      <div class="rooms">${snap.rooms.map(rm=>`<button data-act="move" data-rm="${esc(rm)}" class="${r.room===rm?'on':''}">${esc(rm)}</button>`).join("")}
+        <button data-act="lead">☆ lead</button></div>
+      <div class="mix">
+        <button data-act="mute" class="${r.muted?'danger on':''}">${r.muted?"unmute":"mute"}</button>
+        trim <input type="range" min="10" max="150" value="${r.trim}" data-act="trim"><span>${r.trim}%</span>
+      </div>
+      <div class="dbg">
+        <button data-cmd="adjust_volume" data-args='{"delta":-10}'>vol −</button>
+        <button data-cmd="adjust_volume" data-args='{"delta":10}'>vol +</button>
+        <button data-cmd="identify">identify</button>
+        <button data-cmd="reconnect_bt">BT ⟳</button>
+        <button data-cmd="reconnect_wifi">wifi ⟳</button>
+        <button data-cmd="bt_status">BT?</button>
+        ${snap.mode==="sim"?'<button data-cmd="say" data-args=\'{"clip":1}\'>say</button>':''}
+        <button class="danger" data-act="reboot">reboot</button>
+      </div>`;
+    el.querySelectorAll("[data-cmd]").forEach(b=>b.onclick=()=>cmd(id,b.dataset.cmd,b.dataset.args?JSON.parse(b.dataset.args):{}));
+    el.querySelectorAll("[data-act=move]").forEach(b=>b.onclick=()=>send("move",{pid:id,room:b.dataset.rm,by:"chase"}));
+    el.querySelector("[data-act=lead]").onclick=()=>send("lead_transfer",{lead:id});
+    el.querySelector("[data-act=mute]").onclick=()=>actl(id,{mute:!r.muted});
+    el.querySelector("[data-act=trim]").onchange=e=>actl(id,{trim:+e.target.value});
+    el.querySelector("[data-act=reboot]").onclick=()=>reboot(id);
+    g.appendChild(el);
+  }
+  $("log").textContent=log.join("\n")||"— command log —";
+}
+connect();
+</script></body></html>
